@@ -28,7 +28,7 @@ fn read_next(r: &mut impl BufRead) -> String {
 
 #[test]
 fn server_speaks_over_stdio() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -93,7 +93,7 @@ fn collect_responses(r: &mut impl BufRead, count: usize) -> Vec<serde_json::Valu
 fn pipelined_calls_yield_exact_id_set() {
     let out_dir =
         std::env::temp_dir().join(format!("voz-e2e-pipeline-{}", std::process::id()));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
         .env("VOZ_OUT_DIR", &out_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -147,7 +147,7 @@ fn pipelined_calls_yield_exact_id_set() {
 #[test]
 fn server_speaks_with_rate_and_rejects_out_of_range_rate() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-rate-{}", std::process::id()));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
         .env("VOZ_OUT_DIR", &out_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -197,7 +197,7 @@ fn server_speaks_with_rate_and_rejects_out_of_range_rate() {
 #[test]
 fn server_speaks_with_pitch_and_rejects_out_of_range_pitch() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-pitch-{}", std::process::id()));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
         .env("VOZ_OUT_DIR", &out_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -249,7 +249,7 @@ fn server_speaks_with_pitch_and_rejects_out_of_range_pitch() {
 fn server_lists_readback_after_speak() {
     let out_dir =
         std::env::temp_dir().join(format!("voz-e2e-readback-{}", std::process::id()));
-    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
         .env("VOZ_OUT_DIR", &out_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

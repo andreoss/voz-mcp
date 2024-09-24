@@ -1,27 +1,50 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use rmcp::service::serve_server;
 use rmcp::transport::stdio;
 
-use voz_mcp::backend::{pick_backend, read_env_override, BackendPick};
-use voz_mcp::readback::fs::FsReadback;
-use voz_mcp::tool::Server;
-use voz_mcp::tts::espeak::{scan_store, Espeak};
-use voz_mcp::tts::null::Null;
+use voz_mcp::audio::synthesize;
+use voz_mcp::backend::BackendPick;
+use voz_mcp::cli::{parse, AudioArgs, Mode};
+use voz_mcp::server::{build_backend, build_mcp_server, select_backend_pick};
+
+fn out_dir() -> PathBuf {
+    std::env::var("VOZ_OUT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("audio"))
+}
 
 #[tokio::main]
 async fn main() {
-    let out_dir = std::env::var("VOZ_OUT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("audio"));
-    let discovered = scan_store(Path::new("/nix/store"));
-    let pick = pick_backend(read_env_override().as_deref(), discovered.as_deref());
-    let backend: Box<dyn voz_mcp::tts::Tts> = match pick {
-        BackendPick::Espeak(bin) => Box::new(Espeak::new(bin, out_dir.clone())),
-        BackendPick::Null => Box::new(Null),
-    };
-    let readback = Box::new(FsReadback::new(out_dir));
-    let service = Server::new(backend, readback);
+    let args = std::env::args_os().skip(1);
+    match parse(args) {
+        Ok(Mode::Mcp) => run_mcp().await,
+        Ok(Mode::Audio(audio)) => run_audio(audio),
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    }
+}
+
+async fn run_mcp() {
+    let service = build_mcp_server(select_backend_pick(), out_dir());
     let server = serve_server(service, stdio()).await.expect("failed to serve");
     let _ = server.waiting().await;
+}
+
+fn run_audio(args: AudioArgs) {
+    let pick = select_backend_pick();
+    if pick == BackendPick::Null {
+        eprintln!("no speech backend available");
+        std::process::exit(1);
+    }
+    let backend = build_backend(pick, out_dir());
+    match synthesize(args, backend.as_ref()) {
+        Ok(path) => println!("{}", path.display()),
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    }
 }

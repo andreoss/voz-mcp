@@ -26,7 +26,7 @@ fi
 
 cargo build --examples
 
-BIN="$PWD/target/debug/voz-mcp"
+BIN="$PWD/target/debug/voz"
 SMOKE_DIR="$(mktemp -d "$TMPDIR/voz-qa-smoke-XXXXXX")"
 
 cleanup() {
@@ -35,7 +35,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-coproc SRV { VOZ_OUT_DIR="$SMOKE_DIR" timeout 20 "$BIN" 2>/dev/null; }
+coproc SRV { VOZ_OUT_DIR="$SMOKE_DIR" timeout 20 "$BIN" mcp 2>/dev/null; }
 
 send() {
   printf '%s\n' "$1" >&"${SRV[1]}"

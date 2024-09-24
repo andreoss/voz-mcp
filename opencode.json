@@ -3,7 +3,7 @@
   "mcp": {
     "voz-mcp": {
       "type": "local",
-      "command": ["/user/Project/voz-mcp/target/debug/voz-mcp"],
+      "command": ["/user/Project/voz-mcp/target/debug/voz", "mcp"],
       "enabled": true
     }
   }

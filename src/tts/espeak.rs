@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -67,12 +67,37 @@ impl Tts for Espeak {
     }
 }
 
+pub fn discover_bin() -> Option<PathBuf> {
+    if let Ok(env_bin) = std::env::var("VOZ_ESPEAK_BIN") {
+        let p = PathBuf::from(env_bin);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    scan_store(Path::new("/nix/store"))
+}
+
+fn scan_store(root: &Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(root).ok()? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let store_path = entry.path();
+        if name.contains("espeak-ng") && !name.ends_with(".drv") {
+            let candidate = store_path.join("bin").join("espeak-ng");
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tts::Language;
     use std::io::Read;
-    use std::path::Path;
 
     fn wav_header(file: &Path) -> Option<String> {
         let mut buf = [0u8; 4];
@@ -115,5 +140,19 @@ mod tests {
             let meta = std::fs::metadata(&speech.path).expect("meta");
             assert!(meta.len() > 44, "wav too small");
         }
+    }
+
+    #[test]
+    fn scan_store_finds_built_espeak_and_skips_drv() {
+        let root = std::env::temp_dir().join(format!("voz-store-{}", std::process::id()));
+        let fake = root.join("fake-espeak-ng-9.9.9").join("bin");
+        std::fs::create_dir_all(&fake).expect("mkdir");
+        std::fs::write(fake.join("espeak-ng"), b"x").expect("write");
+        std::fs::write(root.join("fake-espeak-ng-1.0.drv"), b"y").expect("write drv");
+        std::fs::write(root.join("other-espeak-ng-data.drv"), b"z").expect("write drv2");
+
+        let hit = scan_store(&root).expect("found");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(hit.ends_with("fake-espeak-ng-9.9.9/bin/espeak-ng"));
     }
 }

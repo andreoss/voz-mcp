@@ -10,3 +10,20 @@ impl Tts for Null {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tts::Language;
+
+    #[test]
+    fn always_reports_dev_null() {
+        let speech = Null
+            .speak(&SpeakRequest {
+                text: "hi".to_string(),
+                lang: Language::English,
+            })
+            .expect("ok");
+        assert_eq!(speech.path, PathBuf::from("/dev/null"));
+    }
+}

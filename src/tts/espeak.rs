@@ -106,6 +106,16 @@ mod tests {
         Some(String::from_utf8_lossy(&buf).into_owned())
     }
 
+    fn write_script(name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        std::fs::write(&script, body).expect("write script");
+        let mut perms = std::fs::metadata(&script).expect("meta").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).expect("chmod");
+        script
+    }
+
     #[test]
     fn rejects_empty_text() {
         let tts = Espeak::new("/nonexistent", std::env::temp_dir());
@@ -140,6 +150,61 @@ mod tests {
             let meta = std::fs::metadata(&speech.path).expect("meta");
             assert!(meta.len() > 44, "wav too small");
         }
+    }
+
+    #[test]
+    fn spawn_failure_surfaces_error() {
+        let out = std::env::temp_dir().join(format!("voz-spawn-fail-{}", std::process::id()));
+        let tts = Espeak::new("/definitely/not/a/real/binary", &out);
+        let err = tts
+            .speak(&SpeakRequest {
+                text: "hello".to_string(),
+                lang: Language::English,
+            })
+            .unwrap_err();
+        assert!(err.reason.contains("espeak spawn failed"));
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn nonzero_exit_status_surfaces_error() {
+        let script = write_script("voz-fail-bin", "#!/bin/sh\necho boom 1>&2\nexit 1\n");
+        let out = std::env::temp_dir().join(format!("voz-exit-fail-{}", std::process::id()));
+        let tts = Espeak::new(&script, &out);
+        let err = tts
+            .speak(&SpeakRequest {
+                text: "hello".to_string(),
+                lang: Language::English,
+            })
+            .unwrap_err();
+        assert!(err.reason.contains("espeak exited with"));
+        std::fs::remove_file(&script).ok();
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn empty_stdout_surfaces_error() {
+        let script = write_script("voz-empty-bin", "#!/bin/sh\nexit 0\n");
+        let out = std::env::temp_dir().join(format!("voz-empty-out-{}", std::process::id()));
+        let tts = Espeak::new(&script, &out);
+        let err = tts
+            .speak(&SpeakRequest {
+                text: "hello".to_string(),
+                lang: Language::English,
+            })
+            .unwrap_err();
+        assert_eq!(err.reason, "espeak produced no audio");
+        std::fs::remove_file(&script).ok();
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn scan_store_returns_none_when_nothing_matches() {
+        let root = std::env::temp_dir().join(format!("voz-store-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let hit = scan_store(&root);
+        std::fs::remove_dir_all(&root).ok();
+        assert!(hit.is_none());
     }
 
     #[test]

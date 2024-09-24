@@ -60,4 +60,14 @@ mod tests {
         let items = rb.list().expect("list");
         assert!(items.is_empty());
     }
+
+    #[test]
+    fn out_dir_pointing_at_a_file_is_an_error() {
+        let path = std::env::temp_dir().join(format!("voz-readback-notdir-{}", std::process::id()));
+        std::fs::write(&path, b"not a directory").expect("write");
+        let rb = FsReadback::new(&path);
+        let err = rb.list().unwrap_err();
+        std::fs::remove_file(&path).ok();
+        assert!(err.reason.contains("failed to read output directory"));
+    }
 }

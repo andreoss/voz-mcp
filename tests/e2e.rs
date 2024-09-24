@@ -67,7 +67,14 @@ fn server_speaks_over_stdio() {
     let text = call["result"]["content"][0]["text"].as_str().unwrap();
     let out: serde_json::Value = serde_json::from_str(text).expect("parse output");
     assert_eq!(out["lang"], "es");
-    assert_eq!(out["path"], "/dev/null");
+    let path = out["path"].as_str().unwrap();
+    let file = std::path::Path::new(path);
+    assert!(file.exists(), "speech file missing: {path}");
+    assert_eq!(
+        &std::fs::read(file).unwrap()[..4],
+        b"RIFF",
+        "not a valid wav: {path}"
+    );
 
     child.kill().expect("kill");
     child.wait().expect("wait");

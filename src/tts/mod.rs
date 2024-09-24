@@ -1,4 +1,5 @@
 pub mod null;
+pub mod espeak;
 
 use std::path::PathBuf;
 
@@ -28,6 +29,14 @@ impl Language {
         match self {
             Language::Russian => "ru",
             Language::English => "en",
+            Language::Spanish => "es",
+        }
+    }
+
+    pub fn voice(self) -> &'static str {
+        match self {
+            Language::Russian => "ru",
+            Language::English => "en-us",
             Language::Spanish => "es",
         }
     }
@@ -75,5 +84,12 @@ mod tests {
         assert_eq!(Language::Russian.code(), "ru");
         assert_eq!(Language::English.code(), "en");
         assert_eq!(Language::Spanish.code(), "es");
+    }
+
+    #[test]
+    fn voice_maps_language() {
+        assert_eq!(Language::Russian.voice(), "ru");
+        assert_eq!(Language::English.voice(), "en-us");
+        assert_eq!(Language::Spanish.voice(), "es");
     }
 }

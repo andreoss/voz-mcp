@@ -24,6 +24,8 @@ if [ "${SKIP_SMOKE:-0}" = "1" ]; then
   exit 0
 fi
 
+cargo build --examples
+
 BIN="$PWD/target/debug/voz-mcp"
 SMOKE_DIR="$(mktemp -d "$TMPDIR/voz-qa-smoke-XXXXXX")"
 
@@ -97,6 +99,10 @@ RATE_PITCH_SIZE="$(wc -c < "$RATE_PITCH_PATH")"
 [ "$RATE_PITCH_SIZE" -gt 1000 ]
 
 echo "rate+pitch ok: $RATE_PITCH_PATH ($RATE_PITCH_SIZE bytes)"
+
+"$PWD/target/debug/examples/wav_check" "$RATE_PITCH_PATH" >/dev/null
+
+echo "wav depth ok: $RATE_PITCH_PATH"
 
 echo "$BAD_LANG_LINE" | grep -q '"code":-32602'
 echo "$BAD_LANG_LINE" | grep -F -q 'expected ru|en|es'

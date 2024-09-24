@@ -2,6 +2,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use voz_mcp::wav::validate;
+
 fn send_msg(w: &mut impl Write, msg: &str) {
     writeln!(w, "{msg}").expect("write");
     w.flush().expect("flush");
@@ -70,9 +72,8 @@ fn server_speaks_over_stdio() {
     let path = out["path"].as_str().unwrap();
     let file = std::path::Path::new(path);
     assert!(file.exists(), "speech file missing: {path}");
-    assert_eq!(
-        &std::fs::read(file).unwrap()[..4],
-        b"RIFF",
+    assert!(
+        validate(&std::fs::read(file).unwrap()).is_ok(),
         "not a valid wav: {path}"
     );
 
@@ -113,9 +114,8 @@ fn server_speaks_with_rate_and_rejects_out_of_range_rate() {
     let path = out["path"].as_str().unwrap();
     let file = std::path::Path::new(path);
     assert!(file.exists(), "speech file missing: {path}");
-    assert_eq!(
-        &std::fs::read(file).unwrap()[..4],
-        b"RIFF",
+    assert!(
+        validate(&std::fs::read(file).unwrap()).is_ok(),
         "not a valid wav: {path}"
     );
 
@@ -164,9 +164,8 @@ fn server_speaks_with_pitch_and_rejects_out_of_range_pitch() {
     let path = out["path"].as_str().unwrap();
     let file = std::path::Path::new(path);
     assert!(file.exists(), "speech file missing: {path}");
-    assert_eq!(
-        &std::fs::read(file).unwrap()[..4],
-        b"RIFF",
+    assert!(
+        validate(&std::fs::read(file).unwrap()).is_ok(),
         "not a valid wav: {path}"
     );
 
@@ -226,6 +225,9 @@ fn server_lists_readback_after_speak() {
     );
     let speak: serde_json::Value = serde_json::from_str(&read_next(&mut stdout)).expect("parse speak call");
     assert_eq!(speak["result"]["isError"], serde_json::Value::Bool(false));
+    let speak_text = speak["result"]["content"][0]["text"].as_str().unwrap();
+    let speak_out: serde_json::Value = serde_json::from_str(speak_text).expect("parse speak output");
+    let speak_path = speak_out["path"].as_str().unwrap();
 
     send_msg(
         &mut stdin,
@@ -238,6 +240,14 @@ fn server_lists_readback_after_speak() {
     let items = out["items"].as_array().expect("items array");
     assert!(!items.is_empty(), "expected at least one recording listed");
     assert!(items.iter().any(|i| i["name"].as_str().unwrap().ends_with(".wav")));
+    let listed = items
+        .iter()
+        .find(|i| i["path"].as_str() == Some(speak_path))
+        .expect("spoken file listed in readback");
+    assert!(
+        validate(&std::fs::read(listed["path"].as_str().unwrap()).unwrap()).is_ok(),
+        "not a valid wav: {speak_path}"
+    );
 
     child.kill().expect("kill");
     child.wait().expect("wait");

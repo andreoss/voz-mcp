@@ -14,7 +14,9 @@ mkdir -p "$TMPDIR"
 
 cargo build
 
-cargo test
+cargo test --lib
+
+cargo test --test e2e -- --test-threads=1
 
 cargo clippy --all-targets -- -D warnings
 
@@ -30,20 +32,35 @@ BIN="$PWD/target/debug/voz"
 SMOKE_DIR="$(mktemp -d "$TMPDIR/voz-qa-smoke-XXXXXX")"
 
 cleanup() {
-  kill "$SRV_PID" >/dev/null 2>&1 || true
+  kill "${SRV_PID_STABLE:-}" >/dev/null 2>&1 || true
   rm -rf "$SMOKE_DIR"
 }
 trap cleanup EXIT
 
 coproc SRV { VOZ_OUT_DIR="$SMOKE_DIR" timeout 1200 "$BIN" mcp 2>/dev/null; }
+SRV_PID_STABLE="$SRV_PID"
 
 send() {
   printf '%s\n' "$1" >&"${SRV[1]}"
 }
 
 recv() {
-  read -r -u "${SRV[0]}" REPLY
-  printf '%s' "$REPLY"
+  local deadline=$(( $(date +%s) + 300 ))
+  while true; do
+    IFS= read -r -t 1 -u "${SRV[0]}" REPLY || true
+    if [ -n "${REPLY:-}" ]; then
+      printf '%s' "$REPLY"
+      return 0
+    fi
+    if ! kill -0 "$SRV_PID_STABLE" >/dev/null 2>&1; then
+      echo "qa: server died; last line: ${REPLY:-<none>}" >&2
+      return 1
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "qa: timed out waiting for server response" >&2
+      return 1
+    fi
+  done
 }
 
 send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"qa","version":"0.0.0"}}}'

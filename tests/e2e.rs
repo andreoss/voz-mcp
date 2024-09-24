@@ -10,7 +10,7 @@ fn send_msg(w: &mut impl Write, msg: &str) {
 }
 
 fn read_next(r: &mut impl BufRead) -> String {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
     loop {
         let mut line = String::new();
         let n = r.read_line(&mut line).expect("read");

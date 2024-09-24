@@ -1,5 +1,4 @@
 pub mod null;
-pub mod espeak;
 pub mod qwen;
 
 use std::path::PathBuf;
@@ -113,12 +112,6 @@ pub struct TtsError {
 
 pub trait Tts: Send + Sync {
     fn speak(&self, req: &SpeakRequest) -> Result<Speech, TtsError>;
-}
-
-pub(crate) fn spawn_with_retry(
-    cmd: &mut std::process::Command,
-) -> std::io::Result<std::process::Output> {
-    retry_on_etxtbsy(|| cmd.output(), std::thread::sleep)
 }
 
 pub(crate) fn spawn_feed_with_retry(

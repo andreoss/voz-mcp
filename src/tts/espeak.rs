@@ -41,13 +41,11 @@ impl Tts for Espeak {
         if let Some(rate) = req.rate {
             cmd.args(["-s", &rate.value().to_string()]);
         }
-        let output = cmd
-            .args(["--stdout"])
-            .arg(text)
-            .output()
-            .map_err(|e| TtsError {
+        let output = super::spawn_with_retry(cmd.args(["--stdout"]).arg(text)).map_err(|e| {
+            TtsError {
                 reason: format!("espeak spawn failed: {e}"),
-            })?;
+            }
+        })?;
         if !output.status.success() {
             return Err(TtsError {
                 reason: format!(

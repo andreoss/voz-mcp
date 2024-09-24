@@ -63,14 +63,18 @@ impl Tts for Espeak {
                 reason: "espeak produced no audio".to_string(),
             });
         }
-        let mut f = std::fs::File::create(&path).map_err(|e| TtsError {
-            reason: format!("failed to create output file: {e}"),
-        })?;
-        f.write_all(&output.stdout).map_err(|e| TtsError {
-            reason: format!("failed to write output file: {e}"),
-        })?;
+        write_wav(&path, &output.stdout)?;
         Ok(Speech { path })
     }
+}
+
+fn write_wav(path: &Path, data: &[u8]) -> Result<(), TtsError> {
+    let mut f = std::fs::File::create(path).map_err(|e| TtsError {
+        reason: format!("failed to create output file: {e}"),
+    })?;
+    f.write_all(data).map_err(|e| TtsError {
+        reason: format!("failed to write output file: {e}"),
+    })
 }
 
 pub fn scan_store(root: &Path) -> Option<PathBuf> {
@@ -378,6 +382,24 @@ mod tests {
         assert_eq!(err.reason, "espeak produced no audio");
         std::fs::remove_file(&script).ok();
         std::fs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn write_wav_surfaces_create_failure() {
+        let path = Path::new("/definitely/not/a/real/dir-xyz/out.wav");
+        let err = write_wav(path, b"data").unwrap_err();
+        assert!(err.reason.contains("failed to create output file"));
+    }
+
+    #[test]
+    fn write_wav_surfaces_write_failure() {
+        let path = Path::new("/dev/full");
+        if !path.exists() {
+            eprintln!("skipping: /dev/full not present");
+            return;
+        }
+        let err = write_wav(path, b"data").unwrap_err();
+        assert!(err.reason.contains("failed to write output file"));
     }
 
     #[test]

@@ -117,15 +117,25 @@ pub trait Tts: Send + Sync {
 pub(crate) fn spawn_with_retry(
     cmd: &mut std::process::Command,
 ) -> std::io::Result<std::process::Output> {
+    retry_on_etxtbsy(|| cmd.output(), std::thread::sleep)
+}
+
+fn retry_on_etxtbsy<F>(
+    mut attempt: F,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> std::io::Result<std::process::Output>
+where
+    F: FnMut() -> std::io::Result<std::process::Output>,
+{
     for _ in 0..19 {
-        match cmd.output() {
+        match attempt() {
             Err(e) if e.raw_os_error() == Some(26) => {
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                sleep(std::time::Duration::from_millis(5));
             }
             result => return result,
         }
     }
-    cmd.output()
+    attempt()
 }
 
 #[cfg(test)]
@@ -185,5 +195,53 @@ mod tests {
     fn rejects_pitch_out_of_bounds() {
         assert_eq!(Pitch::parse(100), Err(PitchError::OutOfRange));
         assert_eq!(Pitch::parse(9999), Err(PitchError::OutOfRange));
+    }
+
+    fn etxtbsy() -> std::io::Error {
+        std::io::Error::from_raw_os_error(26)
+    }
+
+    fn output_ok() -> std::io::Result<std::process::Output> {
+        Ok(std::process::Output {
+            status: std::os::unix::process::ExitStatusExt::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn retries_and_sleeps_on_etxtbsy_then_succeeds() {
+        let mut attempts = 0;
+        let mut sleeps = 0;
+        let result = retry_on_etxtbsy(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(etxtbsy())
+                } else {
+                    output_ok()
+                }
+            },
+            |_| sleeps += 1,
+        );
+        assert!(result.is_ok());
+        assert_eq!(attempts, 3);
+        assert_eq!(sleeps, 2);
+    }
+
+    #[test]
+    fn gives_up_after_exhausting_retries() {
+        let mut attempts = 0;
+        let mut sleeps = 0;
+        let result = retry_on_etxtbsy(
+            || {
+                attempts += 1;
+                Err(etxtbsy())
+            },
+            |_| sleeps += 1,
+        );
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(26));
+        assert_eq!(attempts, 20);
+        assert_eq!(sleeps, 19);
     }
 }

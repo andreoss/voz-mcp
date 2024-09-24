@@ -1,6 +1,5 @@
 pub mod null;
 pub mod espeak;
-pub mod flite;
 
 use std::path::PathBuf;
 
@@ -39,14 +38,6 @@ impl Language {
             Language::Russian => "ru",
             Language::English => "en-us",
             Language::Spanish => "es",
-        }
-    }
-
-    pub fn flite_voice(self) -> &'static str {
-        match self {
-            Language::Russian => "kal16",
-            Language::English => "kal16",
-            Language::Spanish => "kal16",
         }
     }
 }
@@ -166,13 +157,6 @@ mod tests {
         assert_eq!(Language::Russian.voice(), "ru");
         assert_eq!(Language::English.voice(), "en-us");
         assert_eq!(Language::Spanish.voice(), "es");
-    }
-
-    #[test]
-    fn flite_voice_falls_back_to_the_only_bundled_voice() {
-        assert_eq!(Language::Russian.flite_voice(), "kal16");
-        assert_eq!(Language::English.flite_voice(), "kal16");
-        assert_eq!(Language::Spanish.flite_voice(), "kal16");
     }
 
     #[test]

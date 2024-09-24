@@ -5,7 +5,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 use crate::readback::Readback;
-use crate::tts::{Language, Rate, SpeakRequest, Tts};
+use crate::tts::{Language, Pitch, Rate, SpeakRequest, Tts};
 
 pub struct Server {
     backend: Box<dyn Tts>,
@@ -23,6 +23,7 @@ pub struct SpeakInput {
     pub text: String,
     pub lang: String,
     pub rate: Option<u32>,
+    pub pitch: Option<u32>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -73,12 +74,27 @@ impl Server {
                     None,
                 )
             })?;
+        let pitch = input
+            .pitch
+            .map(Pitch::parse)
+            .transpose()
+            .map_err(|_| {
+                rmcp::ErrorData::invalid_params(
+                    format!(
+                        "pitch must be an integer between {} and {}",
+                        Pitch::MIN,
+                        Pitch::MAX
+                    ),
+                    None,
+                )
+            })?;
         let speech = self
             .backend
             .speak(&SpeakRequest {
                 text: input.text,
                 lang,
                 rate,
+                pitch,
             })
             .map_err(|e| {
                 rmcp::ErrorData::invalid_params(format!("speech synthesis failed: {}", e.reason), None)
@@ -169,6 +185,7 @@ mod tests {
                 text: "hi".to_string(),
                 lang: "en".to_string(),
                 rate: None,
+                pitch: None,
             }))
             .expect("ok");
         assert_eq!(out.0.lang, "en");
@@ -182,6 +199,7 @@ mod tests {
             text: "hi".to_string(),
             lang: "fr".to_string(),
             rate: None,
+            pitch: None,
         })) {
             Err(e) => e,
             Ok(_) => panic!("expected error"),
@@ -196,6 +214,7 @@ mod tests {
             text: "hi".to_string(),
             lang: "en".to_string(),
             rate: None,
+            pitch: None,
         })) {
             Err(e) => e,
             Ok(_) => panic!("expected error"),
@@ -211,6 +230,7 @@ mod tests {
                 text: "hi".to_string(),
                 lang: "en".to_string(),
                 rate: Some(120),
+                pitch: None,
             }))
             .expect("ok");
         assert_eq!(out.0.lang, "en");
@@ -223,6 +243,7 @@ mod tests {
             text: "hi".to_string(),
             lang: "en".to_string(),
             rate: Some(9999),
+            pitch: None,
         })) {
             Err(e) => e,
             Ok(_) => panic!("expected error"),
@@ -234,6 +255,44 @@ mod tests {
     fn non_integer_rate_fails_deserialization() {
         let err = serde_json::from_str::<SpeakInput>(
             r#"{"text":"hi","lang":"en","rate":120.5}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("u32"));
+    }
+
+    #[test]
+    fn speak_accepts_valid_pitch() {
+        let s = server(StubTts, StubReadback(vec![]));
+        let out = s
+            .speak(Parameters(SpeakInput {
+                text: "hi".to_string(),
+                lang: "en".to_string(),
+                rate: None,
+                pitch: Some(60),
+            }))
+            .expect("ok");
+        assert_eq!(out.0.lang, "en");
+    }
+
+    #[test]
+    fn speak_rejects_out_of_range_pitch() {
+        let s = server(StubTts, StubReadback(vec![]));
+        let err = match s.speak(Parameters(SpeakInput {
+            text: "hi".to_string(),
+            lang: "en".to_string(),
+            rate: None,
+            pitch: Some(100),
+        })) {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.message.contains("pitch"));
+    }
+
+    #[test]
+    fn non_integer_pitch_fails_deserialization() {
+        let err = serde_json::from_str::<SpeakInput>(
+            r#"{"text":"hi","lang":"en","pitch":60.5}"#,
         )
         .unwrap_err();
         assert!(err.to_string().contains("u32"));

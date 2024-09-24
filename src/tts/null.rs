@@ -23,6 +23,7 @@ mod tests {
                 text: "hi".to_string(),
                 lang: Language::English,
                 rate: None,
+                pitch: None,
             })
             .expect("ok");
         assert_eq!(speech.path, PathBuf::from("/dev/null"));

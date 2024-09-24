@@ -127,6 +127,7 @@ mod tests {
                 text: "   ".to_string(),
                 lang: Language::English,
                 rate: None,
+                pitch: None,
             })
             .is_err());
     }
@@ -141,6 +142,7 @@ mod tests {
                 text: "hello world".to_string(),
                 lang: Language::English,
                 rate: None,
+                pitch: None,
             })
             .expect("speak ok");
         assert!(speech.path.exists(), "file missing: {}", speech.path.display());
@@ -159,6 +161,7 @@ mod tests {
                 text: "hello".to_string(),
                 lang: Language::English,
                 rate: None,
+                pitch: None,
             })
             .unwrap_err();
         assert!(err.reason.contains("flite spawn failed"));
@@ -175,6 +178,7 @@ mod tests {
                 text: "hello".to_string(),
                 lang: Language::English,
                 rate: None,
+                pitch: None,
             })
             .unwrap_err();
         assert!(err.reason.contains("flite exited with"));
@@ -192,6 +196,7 @@ mod tests {
                 text: "hello".to_string(),
                 lang: Language::English,
                 rate: None,
+                pitch: None,
             })
             .unwrap_err();
         assert_eq!(err.reason, "flite produced no audio");

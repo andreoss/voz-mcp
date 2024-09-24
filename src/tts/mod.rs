@@ -76,11 +76,37 @@ impl Rate {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pitch(u8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PitchError {
+    OutOfRange,
+}
+
+impl Pitch {
+    pub const MIN: u8 = 0;
+    pub const MAX: u8 = 99;
+
+    pub fn parse(n: u32) -> Result<Pitch, PitchError> {
+        if (Self::MIN as u32..=Self::MAX as u32).contains(&n) {
+            Ok(Pitch(n as u8))
+        } else {
+            Err(PitchError::OutOfRange)
+        }
+    }
+
+    pub fn value(self) -> u8 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpeakRequest {
     pub text: String,
     pub lang: Language,
     pub rate: Option<Rate>,
+    pub pitch: Option<Pitch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,5 +188,18 @@ mod tests {
         assert_eq!(Rate::parse(501), Err(RateError::OutOfRange));
         assert_eq!(Rate::parse(9999), Err(RateError::OutOfRange));
         assert_eq!(Rate::parse(0), Err(RateError::OutOfRange));
+    }
+
+    #[test]
+    fn parses_pitch_within_bounds() {
+        assert_eq!(Pitch::parse(0).map(Pitch::value), Ok(0));
+        assert_eq!(Pitch::parse(99).map(Pitch::value), Ok(99));
+        assert_eq!(Pitch::parse(60).map(Pitch::value), Ok(60));
+    }
+
+    #[test]
+    fn rejects_pitch_out_of_bounds() {
+        assert_eq!(Pitch::parse(100), Err(PitchError::OutOfRange));
+        assert_eq!(Pitch::parse(9999), Err(PitchError::OutOfRange));
     }
 }

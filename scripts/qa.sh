@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PATH=/nix/store/3d1c302vw7kc8a5vknhmn34c0pd7zm6m-gcc-wrapper-15.3.0/bin:/nix/store/0l25mxqzafyqkwh345fy4fj97ggr42fv-rustup-1.29.0/bin:$PATH
+if ! command -v cargo >/dev/null 2>&1; then
+	GCC="$(find /nix/store -maxdepth 1 -type d -name '*gcc-wrapper*' ! -name '*.drv' | head -n1)"
+	RUST="$(find /nix/store -maxdepth 1 -type d -name '*rustup*' ! -name '*.drv' | head -n1)"
+	export PATH="$GCC/bin:$RUST/bin:$PATH"
+fi
 
 cd "$(dirname "$0")/.."
 

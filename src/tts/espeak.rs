@@ -73,17 +73,7 @@ impl Tts for Espeak {
     }
 }
 
-pub fn discover_bin() -> Option<PathBuf> {
-    if let Ok(env_bin) = std::env::var("VOZ_ESPEAK_BIN") {
-        let p = PathBuf::from(env_bin);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    scan_store(Path::new("/nix/store"))
-}
-
-fn scan_store(root: &Path) -> Option<PathBuf> {
+pub fn scan_store(root: &Path) -> Option<PathBuf> {
     for entry in std::fs::read_dir(root).ok()? {
         let Ok(entry) = entry else { continue };
         let name = entry.file_name();

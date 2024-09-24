@@ -1,4 +1,5 @@
 pub mod null;
+pub mod piper;
 pub mod qwen;
 
 use std::path::PathBuf;

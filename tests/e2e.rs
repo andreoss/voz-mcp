@@ -351,3 +351,60 @@ fn server_lists_readback_after_speak() {
     child.wait().expect("wait");
     std::fs::remove_dir_all(&out_dir).ok();
 }
+
+#[test]
+fn piper_cli_speaks_when_neural_absent_and_rejects_uncovered_language() {
+    let piper_bin = std::path::PathBuf::from("/user/modelz/piper/bin/piper");
+    if !piper_bin.exists() {
+        return;
+    }
+    let fake_root = std::env::temp_dir().join(format!("voz-e2e-piper-root-{}", std::process::id()));
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-piper-out-{}", std::process::id()));
+    std::fs::create_dir_all(&fake_root).expect("mkdir root");
+    std::fs::create_dir_all(&out_dir).expect("mkdir out");
+    let mut outputs = Vec::new();
+    for lang in ["en", "ru", "es"] {
+        let out = out_dir.join(format!("{lang}.wav"));
+        let status = Command::new(env!("CARGO_BIN_EXE_voz"))
+            .arg("fallback probe")
+            .arg("--lang")
+            .arg(lang)
+            .arg("--rate")
+            .arg("200")
+            .arg("--out")
+            .arg(&out)
+            .env("VOZ_OUT_DIR", &out_dir)
+            .env("VOZ_NEURAL_ROOT", &fake_root)
+            .env("VOZ_PIPER_BIN", &piper_bin)
+            .stdout(Stdio::null())
+            .status()
+            .expect("run cli");
+        assert!(status.success(), "cli failed for lang {lang}");
+        outputs.push((lang, std::fs::read(&out).expect("read wav")));
+    }
+    for (lang, bytes) in &outputs {
+        let info = validate(bytes).expect("valid wav");
+        assert_eq!(info.audio_format, 1, "{lang} not pcm");
+        assert_eq!(info.sample_rate, 22050, "{lang} wrong sample rate");
+        assert!(info.data_size > 20000, "{lang} suspiciously short");
+    }
+    for (i, (la, a)) in outputs.iter().enumerate() {
+        for (lb, b) in outputs.iter().skip(i + 1) {
+            assert_ne!(a, b, "{la} and {lb} must synthesize distinct audio");
+        }
+    }
+    let status = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("fallback probe")
+        .arg("--lang")
+        .arg("ja")
+        .env("VOZ_OUT_DIR", &out_dir)
+        .env("VOZ_NEURAL_ROOT", &fake_root)
+        .env("VOZ_PIPER_BIN", &piper_bin)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run cli");
+    assert!(!status.success(), "ja must fail without a voice");
+    std::fs::remove_dir_all(&fake_root).ok();
+    std::fs::remove_dir_all(&out_dir).ok();
+}

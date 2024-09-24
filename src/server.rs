@@ -1,15 +1,20 @@
 use std::path::PathBuf;
 
-use crate::backend::{neural_root, pick_backend, read_neural_root_override, BackendPick};
+use crate::backend::{
+    neural_root, pick_backend, read_neural_root_override, read_piper_bin_override, BackendPick,
+};
 use crate::readback::fs::FsReadback;
 use crate::tool::Server;
 use crate::tts::null::Null;
+use crate::tts::piper::{scan_piper, Piper};
 use crate::tts::qwen::{scan_modelz, Qwen};
 use crate::tts::Tts;
 
 pub fn select_backend_pick() -> BackendPick {
-    let neural = scan_modelz(&neural_root(read_neural_root_override().as_deref()));
-    pick_backend(neural.as_ref())
+    let root = neural_root(read_neural_root_override().as_deref());
+    let neural = scan_modelz(&root);
+    let piper = scan_piper(&root, read_piper_bin_override().as_deref());
+    pick_backend(neural.as_ref(), piper.as_ref())
 }
 
 pub fn build_backend(pick: BackendPick, out_dir: PathBuf) -> Box<dyn Tts> {
@@ -17,6 +22,7 @@ pub fn build_backend(pick: BackendPick, out_dir: PathBuf) -> Box<dyn Tts> {
         BackendPick::Neural { bin, talker, codec } => {
             Box::new(Qwen::new(bin, talker, codec, out_dir))
         }
+        BackendPick::Piper { bin, voices } => Box::new(Piper::new(bin, voices, out_dir)),
         BackendPick::Null => Box::new(Null),
     }
 }
@@ -61,6 +67,20 @@ mod tests {
                 bin: PathBuf::from("/nonexistent"),
                 talker: PathBuf::from("/nonexistent.gguf"),
                 codec: PathBuf::from("/nonexistent-codec.gguf"),
+            },
+            out.clone(),
+        );
+        assert!(out.exists());
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn build_backend_piper_creates_out_dir() {
+        let out = std::env::temp_dir().join(format!("voz-server-piper-{}", std::process::id()));
+        let _backend = build_backend(
+            BackendPick::Piper {
+                bin: PathBuf::from("/nonexistent"),
+                voices: PathBuf::from("/nonexistent-voices"),
             },
             out.clone(),
         );

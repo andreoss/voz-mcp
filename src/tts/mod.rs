@@ -1,5 +1,6 @@
 pub mod null;
 pub mod espeak;
+pub mod qwen;
 
 use std::path::PathBuf;
 
@@ -118,6 +119,29 @@ pub(crate) fn spawn_with_retry(
     cmd: &mut std::process::Command,
 ) -> std::io::Result<std::process::Output> {
     retry_on_etxtbsy(|| cmd.output(), std::thread::sleep)
+}
+
+pub(crate) fn spawn_feed_with_retry(
+    cmd: &mut std::process::Command,
+    input: &[u8],
+) -> std::io::Result<std::process::Output> {
+    retry_on_etxtbsy(|| feed_child(cmd, input), std::thread::sleep)
+}
+
+fn feed_child(
+    cmd: &mut std::process::Command,
+    input: &[u8],
+) -> std::io::Result<std::process::Output> {
+    use std::io::Write;
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(input);
+    }
+    child.wait_with_output()
 }
 
 fn retry_on_etxtbsy<F>(

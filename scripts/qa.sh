@@ -35,7 +35,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-coproc SRV { VOZ_OUT_DIR="$SMOKE_DIR" timeout 20 "$BIN" mcp 2>/dev/null; }
+coproc SRV { VOZ_OUT_DIR="$SMOKE_DIR" timeout 1200 "$BIN" mcp 2>/dev/null; }
 
 send() {
   printf '%s\n' "$1" >&"${SRV[1]}"

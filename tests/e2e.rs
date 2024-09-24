@@ -28,7 +28,9 @@ fn read_next(r: &mut impl BufRead) -> String {
 
 #[test]
 fn server_speaks_over_stdio() {
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-speak-{}", std::process::id()));
     let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
+        .env("VOZ_OUT_DIR", &out_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -79,6 +81,35 @@ fn server_speaks_over_stdio() {
 
     child.kill().expect("kill");
     child.wait().expect("wait");
+    std::fs::remove_dir_all(&out_dir).ok();
+}
+
+#[test]
+fn neural_cli_yields_valid_wav_and_distinct_bytes_per_language() {
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-neural-{}", std::process::id()));
+    std::fs::create_dir_all(&out_dir).expect("mkdir out");
+    let en = out_dir.join("en.wav");
+    let ru = out_dir.join("ru.wav");
+    for (lang, out) in [("en", &en), ("ru", &ru)] {
+        let status = Command::new(env!("CARGO_BIN_EXE_voz"))
+            .arg("neural probe")
+            .arg("--lang")
+            .arg(lang)
+            .arg("--out")
+            .arg(out)
+            .env("VOZ_OUT_DIR", &out_dir)
+            .stdout(Stdio::null())
+            .env("VOZ_NEURAL_ROOT", std::env::var("VOZ_NEURAL_ROOT").unwrap_or_default())
+            .status()
+            .expect("run cli");
+        assert!(status.success(), "cli failed for lang {lang}");
+    }
+    let en_bytes = std::fs::read(&en).expect("read en wav");
+    let ru_bytes = std::fs::read(&ru).expect("read ru wav");
+    assert!(validate(&en_bytes).is_ok(), "en output not a valid wav");
+    assert!(validate(&ru_bytes).is_ok(), "ru output not a valid wav");
+    assert_ne!(en_bytes, ru_bytes, "ru and en must synthesize distinct audio");
+    std::fs::remove_dir_all(&out_dir).ok();
 }
 
 fn collect_responses(r: &mut impl BufRead, count: usize) -> Vec<serde_json::Value> {

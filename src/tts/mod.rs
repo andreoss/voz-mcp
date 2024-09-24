@@ -42,10 +42,36 @@ impl Language {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rate(u16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateError {
+    OutOfRange,
+}
+
+impl Rate {
+    pub const MIN: u16 = 50;
+    pub const MAX: u16 = 500;
+
+    pub fn parse(n: u32) -> Result<Rate, RateError> {
+        if (Self::MIN as u32..=Self::MAX as u32).contains(&n) {
+            Ok(Rate(n as u16))
+        } else {
+            Err(RateError::OutOfRange)
+        }
+    }
+
+    pub fn value(self) -> u16 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpeakRequest {
     pub text: String,
     pub lang: Language,
+    pub rate: Option<Rate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,5 +117,20 @@ mod tests {
         assert_eq!(Language::Russian.voice(), "ru");
         assert_eq!(Language::English.voice(), "en-us");
         assert_eq!(Language::Spanish.voice(), "es");
+    }
+
+    #[test]
+    fn parses_rate_within_bounds() {
+        assert_eq!(Rate::parse(50).map(Rate::value), Ok(50));
+        assert_eq!(Rate::parse(500).map(Rate::value), Ok(500));
+        assert_eq!(Rate::parse(120).map(Rate::value), Ok(120));
+    }
+
+    #[test]
+    fn rejects_rate_out_of_bounds() {
+        assert_eq!(Rate::parse(49), Err(RateError::OutOfRange));
+        assert_eq!(Rate::parse(501), Err(RateError::OutOfRange));
+        assert_eq!(Rate::parse(9999), Err(RateError::OutOfRange));
+        assert_eq!(Rate::parse(0), Err(RateError::OutOfRange));
     }
 }

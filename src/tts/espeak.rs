@@ -36,8 +36,13 @@ impl Tts for Espeak {
         let path = self
             .out_dir
             .join(format!("speech-{n}-{:04}.wav", std::process::id() % 10000));
-        let output = Command::new(&self.bin)
-            .args(["-v", req.lang.voice(), "--stdout"])
+        let mut cmd = Command::new(&self.bin);
+        cmd.args(["-v", req.lang.voice()]);
+        if let Some(rate) = req.rate {
+            cmd.args(["-s", &rate.value().to_string()]);
+        }
+        let output = cmd
+            .args(["--stdout"])
             .arg(text)
             .output()
             .map_err(|e| TtsError {
@@ -96,7 +101,7 @@ fn scan_store(root: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tts::Language;
+    use crate::tts::{Language, Rate};
     use std::io::Read;
 
     fn wav_header(file: &Path) -> Option<String> {
@@ -123,6 +128,19 @@ mod tests {
             .speak(&SpeakRequest {
                 text: "   ".to_string(),
                 lang: Language::English,
+                rate: None,
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn rejects_empty_text_even_with_rate_set() {
+        let tts = Espeak::new("/nonexistent", std::env::temp_dir());
+        assert!(tts
+            .speak(&SpeakRequest {
+                text: "   ".to_string(),
+                lang: Language::English,
+                rate: Some(Rate::parse(120).unwrap()),
             })
             .is_err());
     }
@@ -143,6 +161,7 @@ mod tests {
                 .speak(&SpeakRequest {
                     text: "hello world".to_string(),
                     lang,
+                    rate: None,
                 })
                 .expect("speak ok");
             assert!(speech.path.exists(), "file missing: {}", speech.path.display());
@@ -153,6 +172,78 @@ mod tests {
     }
 
     #[test]
+    fn produces_real_wav_with_rate_via_espeak() {
+        let bin = std::env::var("VOZ_ESPEAK_BIN").unwrap_or_else(|_| {
+            "/nix/store/156gf924ld4apvl77h22z8b38jqd9wi2-espeak-ng-1.52.0.1-unstable-2025-09-09/bin/espeak-ng".to_string()
+        });
+        if !Path::new(&bin).exists() {
+            eprintln!("skipping: espeak-ng not present at {bin}");
+            return;
+        }
+        let out = std::env::temp_dir().join("voz-test-rate");
+        let tts = Espeak::new(&bin, &out);
+        let speech = tts
+            .speak(&SpeakRequest {
+                text: "hello world".to_string(),
+                lang: Language::English,
+                rate: Some(Rate::parse(120).unwrap()),
+            })
+            .expect("speak ok");
+        assert!(speech.path.exists(), "file missing: {}", speech.path.display());
+        assert_eq!(wav_header(&speech.path).as_deref(), Some("RIFF"));
+    }
+
+    #[test]
+    fn passes_speed_flag_when_rate_present() {
+        let record = std::env::temp_dir().join(format!("voz-rate-args-{}", std::process::id()));
+        let script = write_script(
+            "voz-rate-bin",
+            &format!(
+                "#!/bin/sh\necho \"$@\" > {}\nprintf 'RIFFxxxxWAVEfmt '\n",
+                record.display()
+            ),
+        );
+        let out = std::env::temp_dir().join(format!("voz-rate-out-{}", std::process::id()));
+        let tts = Espeak::new(&script, &out);
+        tts.speak(&SpeakRequest {
+            text: "hello".to_string(),
+            lang: Language::English,
+            rate: Some(Rate::parse(120).unwrap()),
+        })
+        .expect("speak ok");
+        let recorded = std::fs::read_to_string(&record).expect("read args");
+        assert!(recorded.contains("-s 120"), "args were: {recorded}");
+        std::fs::remove_file(&script).ok();
+        std::fs::remove_file(&record).ok();
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
+    fn omits_speed_flag_when_rate_absent() {
+        let record = std::env::temp_dir().join(format!("voz-norate-args-{}", std::process::id()));
+        let script = write_script(
+            "voz-norate-bin",
+            &format!(
+                "#!/bin/sh\necho \"$@\" > {}\nprintf 'RIFFxxxxWAVEfmt '\n",
+                record.display()
+            ),
+        );
+        let out = std::env::temp_dir().join(format!("voz-norate-out-{}", std::process::id()));
+        let tts = Espeak::new(&script, &out);
+        tts.speak(&SpeakRequest {
+            text: "hello".to_string(),
+            lang: Language::English,
+            rate: None,
+        })
+        .expect("speak ok");
+        let recorded = std::fs::read_to_string(&record).expect("read args");
+        assert!(!recorded.contains("-s "), "args were: {recorded}");
+        std::fs::remove_file(&script).ok();
+        std::fs::remove_file(&record).ok();
+        std::fs::remove_dir_all(&out).ok();
+    }
+
+    #[test]
     fn spawn_failure_surfaces_error() {
         let out = std::env::temp_dir().join(format!("voz-spawn-fail-{}", std::process::id()));
         let tts = Espeak::new("/definitely/not/a/real/binary", &out);
@@ -160,6 +251,7 @@ mod tests {
             .speak(&SpeakRequest {
                 text: "hello".to_string(),
                 lang: Language::English,
+                rate: None,
             })
             .unwrap_err();
         assert!(err.reason.contains("espeak spawn failed"));
@@ -175,6 +267,7 @@ mod tests {
             .speak(&SpeakRequest {
                 text: "hello".to_string(),
                 lang: Language::English,
+                rate: None,
             })
             .unwrap_err();
         assert!(err.reason.contains("espeak exited with"));
@@ -191,6 +284,7 @@ mod tests {
             .speak(&SpeakRequest {
                 text: "hello".to_string(),
                 lang: Language::English,
+                rate: None,
             })
             .unwrap_err();
         assert_eq!(err.reason, "espeak produced no audio");

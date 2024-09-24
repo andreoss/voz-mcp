@@ -22,6 +22,7 @@ mod tests {
             .speak(&SpeakRequest {
                 text: "hi".to_string(),
                 lang: Language::English,
+                rate: None,
             })
             .expect("ok");
         assert_eq!(speech.path, PathBuf::from("/dev/null"));

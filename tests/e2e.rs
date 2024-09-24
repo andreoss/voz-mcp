@@ -81,6 +81,57 @@ fn server_speaks_over_stdio() {
 }
 
 #[test]
+fn server_speaks_with_rate_and_rejects_out_of_range_rate() {
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-rate-{}", std::process::id()));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+        .env("VOZ_OUT_DIR", &out_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn server");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0.0.0"}}}"#,
+    );
+    let _init = read_next(&mut stdout);
+
+    send_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"speak","arguments":{"text":"hello","lang":"en","rate":150}}}"#,
+    );
+    let call: serde_json::Value = serde_json::from_str(&read_next(&mut stdout)).expect("parse call");
+    assert_eq!(call["result"]["isError"], serde_json::Value::Bool(false));
+    let text = call["result"]["content"][0]["text"].as_str().unwrap();
+    let out: serde_json::Value = serde_json::from_str(text).expect("parse output");
+    let path = out["path"].as_str().unwrap();
+    let file = std::path::Path::new(path);
+    assert!(file.exists(), "speech file missing: {path}");
+    assert_eq!(
+        &std::fs::read(file).unwrap()[..4],
+        b"RIFF",
+        "not a valid wav: {path}"
+    );
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"speak","arguments":{"text":"hello","lang":"en","rate":9999}}}"#,
+    );
+    let bad_call: serde_json::Value = serde_json::from_str(&read_next(&mut stdout)).expect("parse bad call");
+    assert_eq!(bad_call["error"]["code"], serde_json::Value::from(-32602));
+
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+    std::fs::remove_dir_all(&out_dir).ok();
+}
+
+#[test]
 fn server_lists_readback_after_speak() {
     let out_dir =
         std::env::temp_dir().join(format!("voz-e2e-readback-{}", std::process::id()));

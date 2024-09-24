@@ -5,7 +5,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 use crate::readback::Readback;
-use crate::tts::{Language, SpeakRequest, Tts};
+use crate::tts::{Language, Rate, SpeakRequest, Tts};
 
 pub struct Server {
     backend: Box<dyn Tts>,
@@ -22,6 +22,7 @@ impl Server {
 pub struct SpeakInput {
     pub text: String,
     pub lang: String,
+    pub rate: Option<u32>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -58,11 +59,26 @@ impl Server {
                 None,
             )
         })?;
+        let rate = input
+            .rate
+            .map(Rate::parse)
+            .transpose()
+            .map_err(|_| {
+                rmcp::ErrorData::invalid_params(
+                    format!(
+                        "rate must be an integer between {} and {} wpm",
+                        Rate::MIN,
+                        Rate::MAX
+                    ),
+                    None,
+                )
+            })?;
         let speech = self
             .backend
             .speak(&SpeakRequest {
                 text: input.text,
                 lang,
+                rate,
             })
             .map_err(|e| {
                 rmcp::ErrorData::invalid_params(format!("speech synthesis failed: {}", e.reason), None)
@@ -152,6 +168,7 @@ mod tests {
             .speak(Parameters(SpeakInput {
                 text: "hi".to_string(),
                 lang: "en".to_string(),
+                rate: None,
             }))
             .expect("ok");
         assert_eq!(out.0.lang, "en");
@@ -164,6 +181,7 @@ mod tests {
         let err = match s.speak(Parameters(SpeakInput {
             text: "hi".to_string(),
             lang: "fr".to_string(),
+            rate: None,
         })) {
             Err(e) => e,
             Ok(_) => panic!("expected error"),
@@ -177,11 +195,48 @@ mod tests {
         let err = match s.speak(Parameters(SpeakInput {
             text: "hi".to_string(),
             lang: "en".to_string(),
+            rate: None,
         })) {
             Err(e) => e,
             Ok(_) => panic!("expected error"),
         };
         assert!(err.message.contains("speech synthesis failed"));
+    }
+
+    #[test]
+    fn speak_accepts_valid_rate() {
+        let s = server(StubTts, StubReadback(vec![]));
+        let out = s
+            .speak(Parameters(SpeakInput {
+                text: "hi".to_string(),
+                lang: "en".to_string(),
+                rate: Some(120),
+            }))
+            .expect("ok");
+        assert_eq!(out.0.lang, "en");
+    }
+
+    #[test]
+    fn speak_rejects_out_of_range_rate() {
+        let s = server(StubTts, StubReadback(vec![]));
+        let err = match s.speak(Parameters(SpeakInput {
+            text: "hi".to_string(),
+            lang: "en".to_string(),
+            rate: Some(9999),
+        })) {
+            Err(e) => e,
+            Ok(_) => panic!("expected error"),
+        };
+        assert!(err.message.contains("rate"));
+    }
+
+    #[test]
+    fn non_integer_rate_fails_deserialization() {
+        let err = serde_json::from_str::<SpeakInput>(
+            r#"{"text":"hi","lang":"en","rate":120.5}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("u32"));
     }
 
     #[test]

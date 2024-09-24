@@ -79,3 +79,64 @@ fn server_speaks_over_stdio() {
     child.kill().expect("kill");
     child.wait().expect("wait");
 }
+
+#[test]
+fn server_lists_readback_after_speak() {
+    let out_dir =
+        std::env::temp_dir().join(format!("voz-e2e-readback-{}", std::process::id()));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+        .env("VOZ_OUT_DIR", &out_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn server");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0.0.0"}}}"#,
+    );
+    let _init = read_next(&mut stdout);
+
+    send_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
+    );
+    let tools: serde_json::Value = serde_json::from_str(&read_next(&mut stdout)).expect("parse tools");
+    let names: Vec<&str> = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"speak"));
+    assert!(names.contains(&"readback"));
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"speak","arguments":{"text":"listen back","lang":"en"}}}"#,
+    );
+    let speak: serde_json::Value = serde_json::from_str(&read_next(&mut stdout)).expect("parse speak call");
+    assert_eq!(speak["result"]["isError"], serde_json::Value::Bool(false));
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"readback","arguments":{}}}"#,
+    );
+    let rb: serde_json::Value = serde_json::from_str(&read_next(&mut stdout)).expect("parse readback call");
+    assert_eq!(rb["result"]["isError"], serde_json::Value::Bool(false));
+    let text = rb["result"]["content"][0]["text"].as_str().unwrap();
+    let out: serde_json::Value = serde_json::from_str(text).expect("parse readback output");
+    let items = out["items"].as_array().expect("items array");
+    assert!(!items.is_empty(), "expected at least one recording listed");
+    assert!(items.iter().any(|i| i["name"].as_str().unwrap().ends_with(".wav")));
+
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+    std::fs::remove_dir_all(&out_dir).ok();
+}

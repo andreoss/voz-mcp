@@ -4,15 +4,17 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::readback::Readback;
 use crate::tts::{Language, SpeakRequest, Tts};
 
 pub struct Server {
     backend: Box<dyn Tts>,
+    readback: Box<dyn Readback>,
 }
 
 impl Server {
-    pub fn new(backend: Box<dyn Tts>) -> Self {
-        Self { backend }
+    pub fn new(backend: Box<dyn Tts>, readback: Box<dyn Readback>) -> Self {
+        Self { backend, readback }
     }
 }
 
@@ -26,6 +28,18 @@ pub struct SpeakInput {
 pub struct SpeakOutput {
     pub path: String,
     pub lang: String,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ReadbackItem {
+    pub name: String,
+    pub path: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ReadbackOutput {
+    pub items: Vec<ReadbackItem>,
 }
 
 #[tool_router]
@@ -56,6 +70,29 @@ impl Server {
         Ok(Json(SpeakOutput {
             path: speech.path.to_string_lossy().into_owned(),
             lang: lang.code().to_string(),
+        }))
+    }
+
+    #[tool(
+        name = "readback",
+        description = "List previously synthesized speech output files"
+    )]
+    fn readback(&self) -> Result<Json<ReadbackOutput>, rmcp::ErrorData> {
+        let recordings = self.readback.list().map_err(|e| {
+            rmcp::ErrorData::internal_error(
+                format!("failed to list recordings: {}", e.reason),
+                None,
+            )
+        })?;
+        Ok(Json(ReadbackOutput {
+            items: recordings
+                .into_iter()
+                .map(|r| ReadbackItem {
+                    name: r.name,
+                    path: r.path.to_string_lossy().into_owned(),
+                    bytes: r.bytes,
+                })
+                .collect(),
         }))
     }
 }

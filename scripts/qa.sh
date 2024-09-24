@@ -113,3 +113,16 @@ echo "$READBACK_LINE" | grep -q '"isError":false'
 echo "$READBACK_LINE" | grep -F -q "$RATE_PITCH_PATH"
 
 echo "readback ok: $RATE_PITCH_PATH listed"
+
+CLI_OUT="$SMOKE_DIR/cli-smoke.wav"
+
+"$PWD/target/debug/voz" "cli smoke" --lang en --rate 150 --pitch 60 --out "$CLI_OUT"
+
+[ -f "$CLI_OUT" ]
+
+"$PWD/target/debug/examples/wav_check" "$CLI_OUT" >/dev/null
+
+CLI_SIZE="$(wc -c < "$CLI_OUT")"
+[ "$CLI_SIZE" -gt 1000 ]
+
+echo "cli smoke ok: $CLI_OUT ($CLI_SIZE bytes)"

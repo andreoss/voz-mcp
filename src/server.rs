@@ -31,6 +31,12 @@ mod tests {
     use crate::tts::{Language, SpeakRequest};
 
     #[test]
+    fn select_backend_pick_finds_store_espeak_on_this_host() {
+        let pick = select_backend_pick();
+        assert!(matches!(pick, BackendPick::Espeak(_)));
+    }
+
+    #[test]
     fn build_backend_null_reports_dev_null() {
         let out = std::env::temp_dir().join(format!("voz-server-null-{}", std::process::id()));
         let backend = build_backend(BackendPick::Null, out.clone());

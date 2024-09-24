@@ -81,6 +81,69 @@ fn server_speaks_over_stdio() {
     child.wait().expect("wait");
 }
 
+fn collect_responses(r: &mut impl BufRead, count: usize) -> Vec<serde_json::Value> {
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(serde_json::from_str(&read_next(r)).expect("parse response"));
+    }
+    out
+}
+
+#[test]
+fn pipelined_calls_yield_exact_id_set() {
+    let out_dir =
+        std::env::temp_dir().join(format!("voz-e2e-pipeline-{}", std::process::id()));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_voz-mcp"))
+        .env("VOZ_OUT_DIR", &out_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn server");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    send_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0.0.0"}}}"#,
+    );
+    let _init = read_next(&mut stdout);
+
+    send_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
+
+    for id in [5, 4, 3, 2] {
+        send_msg(
+            &mut stdin,
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"speak","arguments":{{"text":"pipeline {id}","lang":"en"}}}}}}"#
+            ),
+        );
+    }
+    let responses = collect_responses(&mut stdout, 4);
+    let mut ids: Vec<i64> = responses
+        .iter()
+        .map(|r| serde_json::from_value::<serde_json::Value>(r["id"].clone()).unwrap())
+        .map(|v| v.as_i64().unwrap())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![2, 3, 4, 5], "response id set must match request id set");
+    for r in &responses {
+        assert_eq!(r["result"]["isError"], serde_json::Value::Bool(false));
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        let out: serde_json::Value = serde_json::from_str(text).expect("parse output");
+        let path = out["path"].as_str().unwrap();
+        assert!(
+            std::path::Path::new(path).exists(),
+            "speech file missing: {path}"
+        );
+    }
+
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+    std::fs::remove_dir_all(&out_dir).ok();
+}
+
 #[test]
 fn server_speaks_with_rate_and_rejects_out_of_range_rate() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-rate-{}", std::process::id()));

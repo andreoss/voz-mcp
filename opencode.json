@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "voz-mcp": {
+      "type": "local",
+      "command": ["/user/Project/voz-mcp/target/debug/voz-mcp"],
+      "enabled": true
+    }
+  }
+}

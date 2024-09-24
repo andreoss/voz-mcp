@@ -1,0 +1,12 @@
+[package]
+name = "voz-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rmcp = { version = "3.2.0", features = ["server", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+serde_json = "1"

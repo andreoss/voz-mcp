@@ -34,7 +34,7 @@ impl fmt::Display for ParseError {
         match self {
             ParseError::MissingText => write!(
                 f,
-                "text is required: voz <text> [--lang ru|en|es] [--rate {}..{}] [--pitch {}..{}] [--out path]",
+                "text is required: voz <text> [--lang ru|en|es|de|fr|it|pt|zh|ja|ko] [--rate {}..{}] [--pitch {}..{}] [--out path]",
                 Rate::MIN,
                 Rate::MAX,
                 Pitch::MIN,
@@ -42,7 +42,9 @@ impl fmt::Display for ParseError {
             ),
             ParseError::UnknownFlag(flag) => write!(f, "unknown flag: {flag}"),
             ParseError::MissingValue(flag) => write!(f, "missing value for {flag}"),
-            ParseError::Language(_) => write!(f, "unsupported language, expected ru|en|es"),
+            ParseError::Language(_) => {
+                write!(f, "unsupported language, expected ru|en|es|de|fr|it|pt|zh|ja|ko")
+            }
             ParseError::Rate(_) => write!(
                 f,
                 "rate must be an integer between {} and {}",
@@ -168,6 +170,28 @@ mod tests {
     }
 
     #[test]
+    fn every_language_flag_is_applied() {
+        for (flag, lang) in [
+            ("ru", Language::Russian),
+            ("en", Language::English),
+            ("es", Language::Spanish),
+            ("de", Language::German),
+            ("fr", Language::French),
+            ("it", Language::Italian),
+            ("pt", Language::Portuguese),
+            ("zh", Language::Chinese),
+            ("ja", Language::Japanese),
+            ("ko", Language::Korean),
+        ] {
+            let mode = parse(os(&["x", "--lang", flag])).expect("ok");
+            match mode {
+                Mode::Audio(a) => assert_eq!(a.lang, lang, "flag {flag}"),
+                Mode::Mcp => panic!("expected audio mode"),
+            }
+        }
+    }
+
+    #[test]
     fn rate_flag_is_applied() {
         let mode = parse(os(&["hi", "--rate", "150"])).expect("ok");
         match mode {
@@ -263,7 +287,7 @@ mod tests {
     #[test]
     fn invalid_lang_is_rejected() {
         assert_eq!(
-            parse(os(&["hi", "--lang", "fr"])),
+            parse(os(&["hi", "--lang", "zz"])),
             Err(ParseError::Language(LanguageError::Unknown))
         );
     }
@@ -325,7 +349,7 @@ mod tests {
             .contains("--lang"));
         assert!(ParseError::Language(LanguageError::Unknown)
             .to_string()
-            .contains("ru|en|es"));
+            .contains("ru|en|es|de|fr|it|pt|zh|ja|ko"));
         assert!(ParseError::Rate(RateError::OutOfRange)
             .to_string()
             .contains("50"));

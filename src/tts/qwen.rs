@@ -38,6 +38,13 @@ fn lang_flag(lang: Language) -> &'static str {
         Language::Russian => "Russian",
         Language::English => "English",
         Language::Spanish => "Spanish",
+        Language::German => "German",
+        Language::French => "French",
+        Language::Italian => "Italian",
+        Language::Portuguese => "Portuguese",
+        Language::Chinese => "Chinese",
+        Language::Japanese => "Japanese",
+        Language::Korean => "Korean",
     }
 }
 
@@ -218,6 +225,13 @@ mod tests {
             (Language::Russian, "--lang Russian"),
             (Language::English, "--lang English"),
             (Language::Spanish, "--lang Spanish"),
+            (Language::German, "--lang German"),
+            (Language::French, "--lang French"),
+            (Language::Italian, "--lang Italian"),
+            (Language::Portuguese, "--lang Portuguese"),
+            (Language::Chinese, "--lang Chinese"),
+            (Language::Japanese, "--lang Japanese"),
+            (Language::Korean, "--lang Korean"),
         ] {
             let stub = Stub::emitting_fixture("langs");
             let out = stub.dir.join("out");

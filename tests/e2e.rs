@@ -88,27 +88,31 @@ fn server_speaks_over_stdio() {
 fn neural_cli_yields_valid_wav_and_distinct_bytes_per_language() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-neural-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).expect("mkdir out");
-    let en = out_dir.join("en.wav");
-    let ru = out_dir.join("ru.wav");
-    for (lang, out) in [("en", &en), ("ru", &ru)] {
+    let mut outputs = Vec::new();
+    for lang in ["en", "ru", "es", "de", "ja"] {
+        let out = out_dir.join(format!("{lang}.wav"));
         let status = Command::new(env!("CARGO_BIN_EXE_voz"))
             .arg("neural probe")
             .arg("--lang")
             .arg(lang)
             .arg("--out")
-            .arg(out)
+            .arg(&out)
             .env("VOZ_OUT_DIR", &out_dir)
             .stdout(Stdio::null())
             .env("VOZ_NEURAL_ROOT", std::env::var("VOZ_NEURAL_ROOT").unwrap_or_default())
             .status()
             .expect("run cli");
         assert!(status.success(), "cli failed for lang {lang}");
+        outputs.push((lang, std::fs::read(&out).expect("read wav")));
     }
-    let en_bytes = std::fs::read(&en).expect("read en wav");
-    let ru_bytes = std::fs::read(&ru).expect("read ru wav");
-    assert!(validate(&en_bytes).is_ok(), "en output not a valid wav");
-    assert!(validate(&ru_bytes).is_ok(), "ru output not a valid wav");
-    assert_ne!(en_bytes, ru_bytes, "ru and en must synthesize distinct audio");
+    for (lang, bytes) in &outputs {
+        assert!(validate(bytes).is_ok(), "{lang} output not a valid wav");
+    }
+    for (i, (la, a)) in outputs.iter().enumerate() {
+        for (lb, b) in outputs.iter().skip(i + 1) {
+            assert_ne!(a, b, "{la} and {lb} must synthesize distinct audio");
+        }
+    }
     std::fs::remove_dir_all(&out_dir).ok();
 }
 

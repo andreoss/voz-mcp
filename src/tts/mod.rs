@@ -8,6 +8,13 @@ pub enum Language {
     Russian,
     English,
     Spanish,
+    German,
+    French,
+    Italian,
+    Portuguese,
+    Chinese,
+    Japanese,
+    Korean,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +28,13 @@ impl Language {
             "ru" => Ok(Language::Russian),
             "en" => Ok(Language::English),
             "es" => Ok(Language::Spanish),
+            "de" => Ok(Language::German),
+            "fr" => Ok(Language::French),
+            "it" => Ok(Language::Italian),
+            "pt" => Ok(Language::Portuguese),
+            "zh" => Ok(Language::Chinese),
+            "ja" => Ok(Language::Japanese),
+            "ko" => Ok(Language::Korean),
             _ => Err(LanguageError::Unknown),
         }
     }
@@ -30,14 +44,20 @@ impl Language {
             Language::Russian => "ru",
             Language::English => "en",
             Language::Spanish => "es",
+            Language::German => "de",
+            Language::French => "fr",
+            Language::Italian => "it",
+            Language::Portuguese => "pt",
+            Language::Chinese => "zh",
+            Language::Japanese => "ja",
+            Language::Korean => "ko",
         }
     }
 
     pub fn voice(self) -> &'static str {
         match self {
-            Language::Russian => "ru",
             Language::English => "en-us",
-            Language::Spanish => "es",
+            _ => self.code(),
         }
     }
 }
@@ -164,19 +184,27 @@ mod tests {
         assert_eq!(Language::parse("ru"), Ok(Language::Russian));
         assert_eq!(Language::parse("en"), Ok(Language::English));
         assert_eq!(Language::parse("es"), Ok(Language::Spanish));
+        assert_eq!(Language::parse("de"), Ok(Language::German));
+        assert_eq!(Language::parse("fr"), Ok(Language::French));
+        assert_eq!(Language::parse("it"), Ok(Language::Italian));
+        assert_eq!(Language::parse("pt"), Ok(Language::Portuguese));
+        assert_eq!(Language::parse("zh"), Ok(Language::Chinese));
+        assert_eq!(Language::parse("ja"), Ok(Language::Japanese));
+        assert_eq!(Language::parse("ko"), Ok(Language::Korean));
     }
 
     #[test]
     fn rejects_unknown_language() {
-        assert_eq!(Language::parse("fr"), Err(LanguageError::Unknown));
+        assert_eq!(Language::parse("zz"), Err(LanguageError::Unknown));
         assert_eq!(Language::parse(""), Err(LanguageError::Unknown));
+        assert_eq!(Language::parse("EN"), Err(LanguageError::Unknown));
     }
 
     #[test]
-    fn code_roundtrips() {
-        assert_eq!(Language::Russian.code(), "ru");
-        assert_eq!(Language::English.code(), "en");
-        assert_eq!(Language::Spanish.code(), "es");
+    fn code_roundtrips_all_languages() {
+        for code in ["ru", "en", "es", "de", "fr", "it", "pt", "zh", "ja", "ko"] {
+            assert_eq!(Language::parse(code).map(Language::code), Ok(code));
+        }
     }
 
     #[test]
@@ -184,6 +212,13 @@ mod tests {
         assert_eq!(Language::Russian.voice(), "ru");
         assert_eq!(Language::English.voice(), "en-us");
         assert_eq!(Language::Spanish.voice(), "es");
+        assert_eq!(Language::German.voice(), "de");
+        assert_eq!(Language::French.voice(), "fr");
+        assert_eq!(Language::Italian.voice(), "it");
+        assert_eq!(Language::Portuguese.voice(), "pt");
+        assert_eq!(Language::Chinese.voice(), "zh");
+        assert_eq!(Language::Japanese.voice(), "ja");
+        assert_eq!(Language::Korean.voice(), "ko");
     }
 
     #[test]

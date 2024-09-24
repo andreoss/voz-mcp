@@ -77,7 +77,7 @@ CALL_LINE="$(recv)"
 send '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke rate pitch","lang":"en","rate":150,"pitch":60}}}'
 RATE_PITCH_LINE="$(recv)"
 
-send '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke lang","lang":"fr"}}}'
+send '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke lang","lang":"zz"}}}'
 BAD_LANG_LINE="$(recv)"
 
 send '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"readback","arguments":{}}}'
@@ -122,7 +122,7 @@ echo "rate+pitch ok: $RATE_PITCH_PATH ($RATE_PITCH_SIZE bytes)"
 echo "wav depth ok: $RATE_PITCH_PATH"
 
 echo "$BAD_LANG_LINE" | grep -q '"code":-32602'
-echo "$BAD_LANG_LINE" | grep -F -q 'expected ru|en|es'
+echo "$BAD_LANG_LINE" | grep -F -q 'expected ru|en|es|de|fr|it|pt|zh|ja|ko'
 
 echo "-32602 ok: unsupported language rejected"
 
@@ -133,7 +133,7 @@ echo "readback ok: $RATE_PITCH_PATH listed"
 
 CLI_OUT="$SMOKE_DIR/cli-smoke.wav"
 
-"$PWD/target/debug/voz" "cli smoke" --lang en --rate 150 --pitch 60 --out "$CLI_OUT"
+timeout 600 "$PWD/target/debug/voz" "cli smoke" --lang en --rate 150 --pitch 60 --out "$CLI_OUT"
 
 [ -f "$CLI_OUT" ]
 

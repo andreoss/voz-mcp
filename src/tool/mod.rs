@@ -56,7 +56,10 @@ impl Server {
     ) -> Result<Json<SpeakOutput>, rmcp::ErrorData> {
         let lang = Language::parse(&input.lang).map_err(|_| {
             rmcp::ErrorData::invalid_params(
-                format!("unsupported language '{}', expected ru|en|es", input.lang),
+                format!(
+                    "unsupported language '{}', expected ru|en|es|de|fr|it|pt|zh|ja|ko",
+                    input.lang
+                ),
                 None,
             )
         })?;
@@ -197,7 +200,7 @@ mod tests {
         let s = server(StubTts, StubReadback(vec![]));
         let err = match s.speak(Parameters(SpeakInput {
             text: "hi".to_string(),
-            lang: "fr".to_string(),
+            lang: "zz".to_string(),
             rate: None,
             pitch: None,
         })) {

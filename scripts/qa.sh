@@ -26,21 +26,43 @@ fi
 
 BIN="$PWD/target/debug/voz-mcp"
 SMOKE_DIR="$(mktemp -d "$TMPDIR/voz-qa-smoke-XXXXXX")"
-OUT_FILE="$(mktemp "$TMPDIR/voz-qa-smoke-out-XXXXXX")"
 
 cleanup() {
-  rm -rf "$SMOKE_DIR" "$OUT_FILE"
+  kill "$SRV_PID" >/dev/null 2>&1 || true
+  rm -rf "$SMOKE_DIR"
 }
 trap cleanup EXIT
 
-{
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"qa","version":"0.0.0"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke","lang":"en"}}}'
-} | VOZ_OUT_DIR="$SMOKE_DIR" timeout 15 "$BIN" >"$OUT_FILE" 2>/dev/null
+coproc SRV { VOZ_OUT_DIR="$SMOKE_DIR" timeout 20 "$BIN" 2>/dev/null; }
 
-INIT_LINE="$(sed -n '1p' "$OUT_FILE")"
-CALL_LINE="$(sed -n '2p' "$OUT_FILE")"
+send() {
+  printf '%s\n' "$1" >&"${SRV[1]}"
+}
+
+recv() {
+  read -r -u "${SRV[0]}" REPLY
+  printf '%s' "$REPLY"
+}
+
+send '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"qa","version":"0.0.0"}}}'
+INIT_LINE="$(recv)"
+
+send '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+send '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+LIST_LINE="$(recv)"
+
+send '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke","lang":"en"}}}'
+CALL_LINE="$(recv)"
+
+send '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke rate pitch","lang":"en","rate":150,"pitch":60}}}'
+RATE_PITCH_LINE="$(recv)"
+
+send '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke lang","lang":"fr"}}}'
+BAD_LANG_LINE="$(recv)"
+
+send '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"readback","arguments":{}}}'
+READBACK_LINE="$(recv)"
 
 echo "$INIT_LINE" | grep -q '"serverInfo":{"name":"voz-mcp"'
 
@@ -55,3 +77,33 @@ HEADER="$(head -c 4 "$SPEECH_PATH")"
 [ "$HEADER" = "RIFF" ]
 
 echo "smoke ok: $SPEECH_PATH"
+
+echo "$LIST_LINE" | grep -q '"name":"speak"'
+echo "$LIST_LINE" | grep -q '"name":"readback"'
+
+echo "tools/list ok: speak, readback"
+
+echo "$RATE_PITCH_LINE" | grep -q '"isError":false'
+
+RATE_PITCH_PATH="$(echo "$RATE_PITCH_LINE" | grep -o '"path":"[^"]*"' | head -n1 | cut -d'"' -f4)"
+
+[ -n "$RATE_PITCH_PATH" ]
+[ -f "$RATE_PITCH_PATH" ]
+
+RATE_PITCH_HEADER="$(head -c 4 "$RATE_PITCH_PATH")"
+[ "$RATE_PITCH_HEADER" = "RIFF" ]
+
+RATE_PITCH_SIZE="$(wc -c < "$RATE_PITCH_PATH")"
+[ "$RATE_PITCH_SIZE" -gt 1000 ]
+
+echo "rate+pitch ok: $RATE_PITCH_PATH ($RATE_PITCH_SIZE bytes)"
+
+echo "$BAD_LANG_LINE" | grep -q '"code":-32602'
+echo "$BAD_LANG_LINE" | grep -F -q 'expected ru|en|es'
+
+echo "-32602 ok: unsupported language rejected"
+
+echo "$READBACK_LINE" | grep -q '"isError":false'
+echo "$READBACK_LINE" | grep -F -q "$RATE_PITCH_PATH"
+
+echo "readback ok: $RATE_PITCH_PATH listed"

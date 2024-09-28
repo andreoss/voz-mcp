@@ -1,0 +1,115 @@
+# voz
+
+Local, offline text-to-speech in a single Rust binary. All synthesis runs on the
+host; no cloud round-trips.
+
+## Features
+
+- One binary `voz`: CLI mode and an MCP server over stdio.
+- Backends, discovered at startup:
+  - Neural backend (default): CPU runtime over local weights, 24 kHz mono S16 WAV.
+  - Fallback backend: VITS onnx engine as a subprocess, 22.05 kHz mono S16 WAV,
+    one voice file per language, RTF ~0.7 against ~4 for neural.
+  - Null adapter when neither is present: input is accepted, no speech produced.
+- 10 languages: `ru en es de fr it pt zh ja ko` (ISO 639-1). The neural backend
+  covers all 10. The fallback backend covers 9: there is no usable `ja` voice, so
+  `ja` returns a per-language error while the fallback backend is active.
+- `speak` parameters `rate` (50..500) and `pitch` (0..99). Rate is honored by the
+  fallback backend only; the neural backend accepts and drops both.
+
+## Requirements
+
+- Rust toolchain (edition 2024).
+- At least one backend provisioned under the modelz root `/user/modelz`:
+  - Neural: `qwentts/build/qwen-tts` plus a talker and a tokenizer `.gguf` under
+    `gguf/`.
+  - Fallback: `piper/bin/piper` plus voices in the sibling `piper/voices/`
+    (`<lang>_*.onnx` with a matching `.onnx.json`).
+- Linux x86-64; both runtimes are CPU-only.
+
+## Build
+
+```sh
+cargo build --release
+```
+
+The binary is `target/release/voz`.
+
+## CLI usage
+
+```sh
+voz "hello world" --lang en --out hi.wav
+voz "привет мир" --lang ru --rate 170 --pitch 60 --out hi_ru.wav
+```
+
+- `--lang` one of `ru en es de fr it pt zh ja ko` (default `en`).
+- `--rate` 50..500, `--pitch` 0..99; both optional.
+- `--out` destination path; omit it and the file stays under `VOZ_OUT_DIR` and
+  its path is printed.
+- Exactly one positional text argument.
+
+Exit 2 on argument errors, exit 1 when synthesis fails or no backend is
+available.
+
+## MCP server
+
+```sh
+voz mcp
+```
+
+JSON-RPC over stdio (`initialize`, `tools/list`, `tools/call`). Tools:
+
+- `speak { text, lang, rate?, pitch? }` -> `{ path }`.
+- `readback {}` -> the list of synthesized files under `VOZ_OUT_DIR`.
+
+Responses must be correlated by request id, never by arrival order.
+
+Register the binary with any MCP client that launches stdio servers; the entry
+names the command and the environment, e.g.
+
+```json
+{
+  "type": "local",
+  "command": ["/abs/path/to/voz", "mcp"],
+  "environment": { "VOZ_OUT_DIR": "/abs/path/to/audio" },
+  "enabled": true
+}
+```
+
+Restart the client after editing its config; configs load once at startup.
+
+## Environment
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VOZ_OUT_DIR` | `./audio` | Output directory for synthesized speech |
+| `VOZ_BACKEND` | `auto` | Backend selection (see below) |
+| `VOZ_NEURAL_ROOT` | `/user/modelz` | Modelz root override; ignored if the path does not exist |
+| `VOZ_PIPER_BIN` | auto-discovered | Fallback engine executable; voices are read from `../voices` next to it |
+
+`VOZ_BACKEND` values:
+
+- `auto` — neural if discovered, else fallback if discovered, else the null
+  adapter.
+- `neural` — force the neural backend; error and exit if it is not discovered.
+- `fallback` — force the fallback backend; error and exit if it is not
+  discovered.
+- `null` — force the null adapter (accepts input, produces no speech).
+
+An unrecognized value is rejected at startup with the expected list.
+
+```sh
+VOZ_BACKEND=fallback voz "hello" --lang en --out hi.wav
+```
+
+## QA gate
+
+```sh
+bash scripts/qa.sh
+```
+
+Build, unit tests, serialized e2e, clippy (`-D warnings`), a coverage gate
+(85% floor, `src/main.rs` excluded), and a stdio smoke test against the real
+stack. `SKIP_SMOKE=1` stops before the smoke stage.
+
+See `doc/` for process, backlog, ADRs, and the coverage record.

@@ -59,8 +59,9 @@ voz mcp
 
 JSON-RPC over stdio (`initialize`, `tools/list`, `tools/call`). Tools:
 
-- `speak { text, lang, rate?, pitch? }` -> `{ path }`.
-- `readback {}` -> the list of synthesized files under `VOZ_OUT_DIR`.
+- `speak { text, lang, rate?, pitch? }` -> `{ path, lang }`.
+- `readback {}` -> `{ items: [{ name, path, bytes }] }`, the files under
+  `VOZ_OUT_DIR`.
 
 Responses must be correlated by request id, never by arrival order.
 
@@ -114,8 +115,10 @@ VOZ_BACKEND=fallback voz "hello" --lang en --out hi.wav
 bash scripts/qa.sh
 ```
 
-Build, unit tests, serialized e2e, clippy (`-D warnings`), a coverage gate
-(85% floor, `src/main.rs` excluded), and a stdio smoke test against the real
-stack. `SKIP_SMOKE=1` stops before the smoke stage.
+Runs the whole gate: build, tests, clippy, a coverage floor, and live smokes
+against the real stack. `SKIP_SMOKE=1` stops before the smoke stages. The
+stage list is not repeated here; `doc/Pilot.adoc` and `doc/COVERAGE.adoc`
+own it.
 
-See `doc/` for process, backlog, ADRs, and the coverage record.
+See `doc/` for process, backlog and the coverage record, and
+`doc/adr/INDEX.adoc` for which design decisions currently hold.

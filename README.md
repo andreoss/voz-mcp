@@ -86,6 +86,7 @@ Restart the client after editing its config; configs load once at startup.
 | `VOZ_BACKEND` | `auto` | Backend selection (see below) |
 | `VOZ_NEURAL_ROOT` | `/user/modelz` | Modelz root override; ignored if the path does not exist |
 | `VOZ_PIPER_BIN` | auto-discovered | Fallback engine executable; voices are read from `../voices` next to it |
+| `VOZ_TIMEOUT_SECS` | `600` | Synthesis budget in whole seconds, `1..86400` |
 
 `VOZ_BACKEND` values:
 
@@ -97,6 +98,11 @@ Restart the client after editing its config; configs load once at startup.
 - `null` — force the null adapter (accepts input, produces no speech).
 
 An unrecognized value is rejected at startup with the expected list.
+
+`VOZ_TIMEOUT_SECS` bounds one synthesis. If the engine has not finished within
+the budget it is killed and the call fails rather than waiting forever; an
+unusable value is rejected at startup with the accepted range. Raise it for
+long inputs on the neural backend, which runs slower than real time.
 
 ```sh
 VOZ_BACKEND=fallback voz "hello" --lang en --out hi.wav

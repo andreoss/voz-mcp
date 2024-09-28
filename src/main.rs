@@ -27,14 +27,24 @@ async fn main() {
     }
 }
 
+fn pick_or_exit() -> BackendPick {
+    match select_backend_pick() {
+        Ok(pick) => pick,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(e.exit_code());
+        }
+    }
+}
+
 async fn run_mcp() {
-    let service = build_mcp_server(select_backend_pick(), out_dir());
+    let service = build_mcp_server(pick_or_exit(), out_dir());
     let server = serve_server(service, stdio()).await.expect("failed to serve");
     let _ = server.waiting().await;
 }
 
 fn run_audio(args: AudioArgs) {
-    let pick = select_backend_pick();
+    let pick = pick_or_exit();
     if pick == BackendPick::Null {
         eprintln!("no speech backend available");
         std::process::exit(1);

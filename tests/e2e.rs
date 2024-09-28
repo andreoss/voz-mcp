@@ -358,9 +358,7 @@ fn piper_cli_speaks_when_neural_absent_and_rejects_uncovered_language() {
     if !piper_bin.exists() {
         return;
     }
-    let fake_root = std::env::temp_dir().join(format!("voz-e2e-piper-root-{}", std::process::id()));
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-piper-out-{}", std::process::id()));
-    std::fs::create_dir_all(&fake_root).expect("mkdir root");
     std::fs::create_dir_all(&out_dir).expect("mkdir out");
     let mut outputs = Vec::new();
     for lang in ["en", "ru", "es"] {
@@ -374,7 +372,7 @@ fn piper_cli_speaks_when_neural_absent_and_rejects_uncovered_language() {
             .arg("--out")
             .arg(&out)
             .env("VOZ_OUT_DIR", &out_dir)
-            .env("VOZ_NEURAL_ROOT", &fake_root)
+            .env("VOZ_BACKEND", "fallback")
             .env("VOZ_PIPER_BIN", &piper_bin)
             .stdout(Stdio::null())
             .status()
@@ -398,13 +396,42 @@ fn piper_cli_speaks_when_neural_absent_and_rejects_uncovered_language() {
         .arg("--lang")
         .arg("ja")
         .env("VOZ_OUT_DIR", &out_dir)
-        .env("VOZ_NEURAL_ROOT", &fake_root)
+        .env("VOZ_BACKEND", "fallback")
         .env("VOZ_PIPER_BIN", &piper_bin)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .expect("run cli");
     assert!(!status.success(), "ja must fail without a voice");
-    std::fs::remove_dir_all(&fake_root).ok();
     std::fs::remove_dir_all(&out_dir).ok();
+}
+
+#[test]
+fn unknown_backend_override_is_rejected_with_the_expected_list() {
+    let output = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("probe")
+        .env("VOZ_BACKEND", "espeak")
+        .output()
+        .expect("run cli");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("espeak"), "{stderr}");
+    assert!(stderr.contains("auto|neural|fallback|null"), "{stderr}");
+}
+
+#[test]
+fn forcing_an_undiscovered_backend_fails_loudly() {
+    let empty_root = std::env::temp_dir().join(format!("voz-e2e-empty-root-{}", std::process::id()));
+    std::fs::create_dir_all(&empty_root).expect("mkdir root");
+    let output = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("probe")
+        .env("VOZ_BACKEND", "neural")
+        .env("VOZ_NEURAL_ROOT", &empty_root)
+        .env("VOZ_PIPER_BIN", "/nonexistent")
+        .output()
+        .expect("run cli");
+    std::fs::remove_dir_all(&empty_root).ok();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("neural backend not available"), "{stderr}");
 }

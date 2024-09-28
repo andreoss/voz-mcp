@@ -1,3 +1,5 @@
+use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,22 +29,116 @@ pub enum BackendPick {
     Null,
 }
 
+pub const BACKEND_CHOICES: &str = "auto|neural|fallback|null";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendChoice {
+    Auto,
+    Neural,
+    Fallback,
+    Null,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendChoiceError {
+    Unknown,
+}
+
+impl BackendChoice {
+    pub fn parse(s: &str) -> Result<BackendChoice, BackendChoiceError> {
+        match s {
+            "auto" => Ok(BackendChoice::Auto),
+            "neural" => Ok(BackendChoice::Neural),
+            "fallback" => Ok(BackendChoice::Fallback),
+            "null" => Ok(BackendChoice::Null),
+            _ => Err(BackendChoiceError::Unknown),
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            BackendChoice::Auto => "auto",
+            BackendChoice::Neural => "neural",
+            BackendChoice::Fallback => "fallback",
+            BackendChoice::Null => "null",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectionError {
+    UnknownChoice(String),
+    Unavailable(BackendChoice),
+}
+
+impl SelectionError {
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            SelectionError::UnknownChoice(_) => 2,
+            SelectionError::Unavailable(_) => 1,
+        }
+    }
+}
+
+impl fmt::Display for SelectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SelectionError::UnknownChoice(value) => {
+                write!(f, "unsupported backend {value}, expected {BACKEND_CHOICES}")
+            }
+            SelectionError::Unavailable(choice) => {
+                write!(f, "{} backend not available", choice.code())
+            }
+        }
+    }
+}
+
+pub fn backend_choice(env_override: Option<&OsStr>) -> Result<BackendChoice, SelectionError> {
+    let Some(raw) = env_override else {
+        return Ok(BackendChoice::Auto);
+    };
+    let raw = raw.to_string_lossy();
+    BackendChoice::parse(&raw).map_err(|_| SelectionError::UnknownChoice(raw.into_owned()))
+}
+
 pub fn pick_backend(
+    choice: BackendChoice,
     neural_discovered: Option<&NeuralPaths>,
     piper_discovered: Option<&PiperPaths>,
-) -> BackendPick {
-    match (neural_discovered, piper_discovered) {
-        (Some(n), _) => BackendPick::Neural {
-            bin: n.bin.clone(),
-            talker: n.talker.clone(),
-            codec: n.codec.clone(),
-        },
-        (None, Some(p)) => BackendPick::Piper {
-            bin: p.bin.clone(),
-            voices: p.voices.clone(),
-        },
-        (None, None) => BackendPick::Null,
+) -> Result<BackendPick, SelectionError> {
+    match choice {
+        BackendChoice::Null => Ok(BackendPick::Null),
+        BackendChoice::Neural => neural_discovered
+            .map(neural_pick)
+            .ok_or(SelectionError::Unavailable(choice)),
+        BackendChoice::Fallback => piper_discovered
+            .map(piper_pick)
+            .ok_or(SelectionError::Unavailable(choice)),
+        BackendChoice::Auto => Ok(match (neural_discovered, piper_discovered) {
+            (Some(n), _) => neural_pick(n),
+            (None, Some(p)) => piper_pick(p),
+            (None, None) => BackendPick::Null,
+        }),
     }
+}
+
+fn neural_pick(n: &NeuralPaths) -> BackendPick {
+    BackendPick::Neural {
+        bin: n.bin.clone(),
+        talker: n.talker.clone(),
+        codec: n.codec.clone(),
+    }
+}
+
+fn piper_pick(p: &PiperPaths) -> BackendPick {
+    BackendPick::Piper {
+        bin: p.bin.clone(),
+        voices: p.voices.clone(),
+    }
+}
+
+pub fn read_backend_choice_override() -> Option<OsString> {
+    std::env::var_os("VOZ_BACKEND")
 }
 
 pub fn read_neural_root_override() -> Option<PathBuf> {
@@ -80,44 +176,44 @@ mod tests {
     }
 
     #[test]
-    fn discovered_neural_yields_neural_pick() {
+    fn auto_yields_neural_when_discovered() {
         let n = neural();
-        let pick = pick_backend(Some(&n), None);
+        let pick = pick_backend(BackendChoice::Auto, Some(&n), None);
         assert_eq!(
             pick,
-            BackendPick::Neural {
+            Ok(BackendPick::Neural {
                 bin: n.bin,
                 talker: n.talker,
                 codec: n.codec,
-            }
+            })
         );
     }
 
     #[test]
-    fn neural_wins_over_piper() {
+    fn auto_prefers_neural_over_fallback() {
         let n = neural();
         let p = piper();
         assert!(matches!(
-            pick_backend(Some(&n), Some(&p)),
-            BackendPick::Neural { .. }
+            pick_backend(BackendChoice::Auto, Some(&n), Some(&p)),
+            Ok(BackendPick::Neural { .. })
         ));
     }
 
     #[test]
-    fn piper_picked_when_neural_absent() {
+    fn auto_falls_back_when_neural_absent() {
         let p = piper();
         assert_eq!(
-            pick_backend(None, Some(&p)),
-            BackendPick::Piper {
+            pick_backend(BackendChoice::Auto, None, Some(&p)),
+            Ok(BackendPick::Piper {
                 bin: p.bin,
                 voices: p.voices,
-            }
+            })
         );
     }
 
     #[test]
-    fn nothing_discovered_yields_null() {
-        assert_eq!(pick_backend(None, None), BackendPick::Null);
+    fn auto_yields_null_when_nothing_discovered() {
+        assert_eq!(pick_backend(BackendChoice::Auto, None, None), Ok(BackendPick::Null));
     }
 
     #[test]
@@ -150,5 +246,140 @@ mod tests {
     #[test]
     fn neural_root_defaults_without_override() {
         assert_eq!(neural_root(None), PathBuf::from("/user/modelz"));
+    }
+
+    fn choice(s: &str) -> BackendChoice {
+        BackendChoice::parse(s).expect("choice")
+    }
+
+    #[test]
+    fn parses_every_backend_choice() {
+        assert_eq!(choice("auto"), BackendChoice::Auto);
+        assert_eq!(choice("neural"), BackendChoice::Neural);
+        assert_eq!(choice("fallback"), BackendChoice::Fallback);
+        assert_eq!(choice("null"), BackendChoice::Null);
+    }
+
+    #[test]
+    fn rejects_unknown_backend_choice() {
+        assert_eq!(BackendChoice::parse("espeak"), Err(BackendChoiceError::Unknown));
+        assert_eq!(BackendChoice::parse(""), Err(BackendChoiceError::Unknown));
+    }
+
+    #[test]
+    fn backend_choice_code_round_trips() {
+        for c in [
+            BackendChoice::Auto,
+            BackendChoice::Neural,
+            BackendChoice::Fallback,
+            BackendChoice::Null,
+        ] {
+            assert_eq!(choice(c.code()), c);
+        }
+    }
+
+    #[test]
+    fn forced_fallback_wins_over_discovered_neural() {
+        let n = neural();
+        let p = piper();
+        assert_eq!(
+            pick_backend(BackendChoice::Fallback, Some(&n), Some(&p)),
+            Ok(BackendPick::Piper {
+                bin: p.bin,
+                voices: p.voices,
+            })
+        );
+    }
+
+    #[test]
+    fn forced_neural_wins_over_discovered_fallback() {
+        let n = neural();
+        let p = piper();
+        assert!(matches!(
+            pick_backend(BackendChoice::Neural, Some(&n), Some(&p)),
+            Ok(BackendPick::Neural { .. })
+        ));
+    }
+
+    #[test]
+    fn forced_neural_errors_when_undiscovered() {
+        let p = piper();
+        assert_eq!(
+            pick_backend(BackendChoice::Neural, None, Some(&p)),
+            Err(SelectionError::Unavailable(BackendChoice::Neural))
+        );
+    }
+
+    #[test]
+    fn forced_fallback_errors_when_undiscovered() {
+        let n = neural();
+        assert_eq!(
+            pick_backend(BackendChoice::Fallback, Some(&n), None),
+            Err(SelectionError::Unavailable(BackendChoice::Fallback))
+        );
+    }
+
+    #[test]
+    fn forced_null_ignores_discovery() {
+        let n = neural();
+        let p = piper();
+        assert_eq!(
+            pick_backend(BackendChoice::Null, Some(&n), Some(&p)),
+            Ok(BackendPick::Null)
+        );
+    }
+
+    #[test]
+    fn unknown_choice_error_lists_expected_values() {
+        let err = SelectionError::UnknownChoice("espeak".to_string());
+        let text = err.to_string();
+        assert!(text.contains("espeak"));
+        assert!(text.contains(BACKEND_CHOICES));
+    }
+
+    #[test]
+    fn unavailable_error_names_the_forced_backend() {
+        let text = SelectionError::Unavailable(BackendChoice::Fallback).to_string();
+        assert!(text.contains("fallback"));
+        assert!(text.contains("not available"));
+    }
+
+    #[test]
+    fn unknown_choice_exits_two_and_unavailable_exits_one() {
+        assert_eq!(
+            SelectionError::UnknownChoice("x".to_string()).exit_code(),
+            2
+        );
+        assert_eq!(
+            SelectionError::Unavailable(BackendChoice::Neural).exit_code(),
+            1
+        );
+    }
+
+    #[test]
+    fn backend_choice_defaults_to_auto_without_env() {
+        assert_eq!(backend_choice(None), Ok(BackendChoice::Auto));
+    }
+
+    #[test]
+    fn backend_choice_reads_override() {
+        assert_eq!(
+            backend_choice(Some(OsStr::new("fallback"))),
+            Ok(BackendChoice::Fallback)
+        );
+    }
+
+    #[test]
+    fn backend_choice_rejects_unknown_override() {
+        assert_eq!(
+            backend_choice(Some(OsStr::new("espeak"))),
+            Err(SelectionError::UnknownChoice("espeak".to_string()))
+        );
+    }
+
+    #[test]
+    fn read_backend_choice_override_reflects_process_env() {
+        let expected = std::env::var_os("VOZ_BACKEND");
+        assert_eq!(read_backend_choice_override(), expected);
     }
 }

@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use crate::backend::{
-    neural_root, pick_backend, read_neural_root_override, read_piper_bin_override, BackendPick,
+    backend_choice, neural_root, pick_backend, read_backend_choice_override,
+    read_neural_root_override, read_piper_bin_override, BackendChoice, BackendPick, SelectionError,
 };
 use crate::readback::fs::FsReadback;
 use crate::tool::Server;
@@ -10,11 +11,15 @@ use crate::tts::piper::{scan_piper, Piper};
 use crate::tts::qwen::{scan_modelz, Qwen};
 use crate::tts::Tts;
 
-pub fn select_backend_pick() -> BackendPick {
+pub fn discover_backend_pick(choice: BackendChoice) -> Result<BackendPick, SelectionError> {
     let root = neural_root(read_neural_root_override().as_deref());
     let neural = scan_modelz(&root);
     let piper = scan_piper(&root, read_piper_bin_override().as_deref());
-    pick_backend(neural.as_ref(), piper.as_ref())
+    pick_backend(choice, neural.as_ref(), piper.as_ref())
+}
+
+pub fn select_backend_pick() -> Result<BackendPick, SelectionError> {
+    discover_backend_pick(backend_choice(read_backend_choice_override().as_deref())?)
 }
 
 pub fn build_backend(pick: BackendPick, out_dir: PathBuf) -> Box<dyn Tts> {
@@ -41,7 +46,18 @@ mod tests {
     #[test]
     fn select_backend_pick_finds_neural_stack_on_this_host() {
         let pick = select_backend_pick();
-        assert!(matches!(pick, BackendPick::Neural { .. }));
+        assert!(matches!(pick, Ok(BackendPick::Neural { .. })));
+    }
+
+    #[test]
+    fn forced_fallback_discovers_the_fallback_runtime_on_this_host() {
+        let pick = discover_backend_pick(BackendChoice::Fallback);
+        assert!(matches!(pick, Ok(BackendPick::Piper { .. })));
+    }
+
+    #[test]
+    fn forced_null_needs_no_discovery() {
+        assert_eq!(discover_backend_pick(BackendChoice::Null), Ok(BackendPick::Null));
     }
 
     #[test]

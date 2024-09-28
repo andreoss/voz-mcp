@@ -143,3 +143,44 @@ CLI_SIZE="$(wc -c < "$CLI_OUT")"
 [ "$CLI_SIZE" -gt 1000 ]
 
 echo "cli smoke ok: $CLI_OUT ($CLI_SIZE bytes)"
+
+FALLBACK_BIN="${VOZ_PIPER_BIN:-/user/modelz/piper/bin/piper}"
+
+if [ -x "$FALLBACK_BIN" ]; then
+  FB_OUT="$SMOKE_DIR/fallback-en.wav"
+
+  VOZ_BACKEND=fallback VOZ_PIPER_BIN="$FALLBACK_BIN" VOZ_OUT_DIR="$SMOKE_DIR" \
+    timeout 600 "$BIN" "fallback smoke" --lang en --rate 200 --out "$FB_OUT"
+
+  [ -f "$FB_OUT" ]
+
+  "$PWD/target/debug/examples/wav_check" "$FB_OUT" >/dev/null
+
+  FB_SIZE="$(wc -c < "$FB_OUT")"
+  [ "$FB_SIZE" -gt 1000 ]
+
+  echo "fallback smoke ok: $FB_OUT ($FB_SIZE bytes)"
+
+  set +e
+  FB_JA_ERR="$(VOZ_BACKEND=fallback VOZ_PIPER_BIN="$FALLBACK_BIN" VOZ_OUT_DIR="$SMOKE_DIR" \
+    timeout 600 "$BIN" "fallback ja" --lang ja --out "$SMOKE_DIR/fallback-ja.wav" 2>&1 >/dev/null)"
+  FB_JA_CODE=$?
+  set -e
+
+  [ "$FB_JA_CODE" -ne 0 ]
+  echo "$FB_JA_ERR" | grep -F -q "voice for language ja"
+
+  echo "fallback ja rejected ok"
+else
+  echo "fallback smoke skipped: no fallback runtime at $FALLBACK_BIN"
+fi
+
+set +e
+BAD_BACKEND_ERR="$(VOZ_BACKEND=espeak VOZ_OUT_DIR="$SMOKE_DIR" "$BIN" "backend probe" 2>&1 >/dev/null)"
+BAD_BACKEND_CODE=$?
+set -e
+
+[ "$BAD_BACKEND_CODE" -eq 2 ]
+echo "$BAD_BACKEND_ERR" | grep -F -q 'auto|neural|fallback|null'
+
+echo "backend override validation ok"

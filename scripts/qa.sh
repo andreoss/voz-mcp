@@ -184,3 +184,29 @@ set -e
 echo "$BAD_BACKEND_ERR" | grep -F -q 'auto|neural|fallback|null'
 
 echo "backend override validation ok"
+
+TIMEOUT_START="$(date +%s)"
+
+set +e
+TIMEOUT_ERR="$(VOZ_TIMEOUT_SECS=1 VOZ_OUT_DIR="$SMOKE_DIR" \
+  timeout 300 "$BIN" "timeout probe" --lang en --out "$SMOKE_DIR/timeout.wav" 2>&1 >/dev/null)"
+TIMEOUT_CODE=$?
+set -e
+
+TIMEOUT_ELAPSED=$(( $(date +%s) - TIMEOUT_START ))
+
+[ "$TIMEOUT_CODE" -ne 0 ]
+echo "$TIMEOUT_ERR" | grep -F -q "exceeded"
+[ "$TIMEOUT_ELAPSED" -lt 60 ]
+
+echo "bounded synthesis ok: engine killed after 1 s budget (${TIMEOUT_ELAPSED}s)"
+
+set +e
+BAD_TIMEOUT_ERR="$(VOZ_TIMEOUT_SECS=soon VOZ_OUT_DIR="$SMOKE_DIR" "$BIN" "timeout probe" 2>&1 >/dev/null)"
+BAD_TIMEOUT_CODE=$?
+set -e
+
+[ "$BAD_TIMEOUT_CODE" -eq 2 ]
+echo "$BAD_TIMEOUT_ERR" | grep -F -q "1..86400"
+
+echo "timeout override validation ok"

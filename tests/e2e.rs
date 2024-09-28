@@ -476,3 +476,27 @@ fn unusable_timeout_override_is_rejected() {
     assert!(stderr.contains("soon"), "{stderr}");
     assert!(stderr.contains("86400"), "{stderr}");
 }
+
+#[test]
+fn help_and_version_answer_successfully() {
+    for flag in ["--help", "-h"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_voz"))
+            .arg(flag)
+            .output()
+            .expect("run cli");
+        assert_eq!(out.status.code(), Some(0), "{flag}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("--lang"), "{flag}: {text}");
+        assert!(text.contains("VOZ_TIMEOUT_SECS"), "{flag}: {text}");
+    }
+    for flag in ["--version", "-V"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_voz"))
+            .arg(flag)
+            .output()
+            .expect("run cli");
+        assert_eq!(out.status.code(), Some(0), "{flag}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.starts_with("voz "), "{flag}: {text}");
+        assert!(text.contains(env!("CARGO_PKG_VERSION")), "{flag}: {text}");
+    }
+}

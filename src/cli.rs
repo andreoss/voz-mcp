@@ -7,6 +7,8 @@ use crate::tts::{Language, LanguageError, Pitch, PitchError, Rate, RateError};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Mcp,
+    Help,
+    Version,
     Audio(AudioArgs),
 }
 
@@ -29,21 +31,37 @@ pub enum ParseError {
     Pitch(PitchError),
 }
 
+pub fn usage() -> String {
+    format!(
+        "voz <text> [--lang {}] [--rate {}..{}] [--pitch {}..{}] [--out path]\n\
+         voz mcp                stdio MCP server (speak, readback)\n\
+         voz --help | -h        this message\n\
+         voz --version | -V     version\n\
+         \n\
+         env: VOZ_OUT_DIR output dir; VOZ_BACKEND {}; VOZ_NEURAL_ROOT data\n\
+         root; VOZ_NEURAL_BIN, VOZ_PIPER_BIN engine paths; VOZ_TIMEOUT_SECS\n\
+         synthesis budget in seconds",
+        LANGUAGES,
+        Rate::MIN,
+        Rate::MAX,
+        Pitch::MIN,
+        Pitch::MAX,
+        crate::backend::BACKEND_CHOICES
+    )
+}
+
+pub fn version_line() -> String {
+    format!("voz {}", env!("CARGO_PKG_VERSION"))
+}
+
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::MissingText => write!(
-                f,
-                "text is required: voz <text> [--lang ru|en|es|de|fr|it|pt|zh|ja|ko] [--rate {}..{}] [--pitch {}..{}] [--out path]",
-                Rate::MIN,
-                Rate::MAX,
-                Pitch::MIN,
-                Pitch::MAX
-            ),
+            ParseError::MissingText => write!(f, "text is required\n{}", usage()),
             ParseError::UnknownFlag(flag) => write!(f, "unknown flag: {flag}"),
             ParseError::MissingValue(flag) => write!(f, "missing value for {flag}"),
             ParseError::Language(_) => {
-                write!(f, "unsupported language, expected ru|en|es|de|fr|it|pt|zh|ja|ko")
+                write!(f, "unsupported language, expected {LANGUAGES}")
             }
             ParseError::Rate(_) => write!(
                 f,
@@ -61,6 +79,8 @@ impl fmt::Display for ParseError {
     }
 }
 
+pub const LANGUAGES: &str = "ru|en|es|de|fr|it|pt|zh|ja|ko";
+
 pub fn parse<I>(args: I) -> Result<Mode, ParseError>
 where
     I: IntoIterator<Item = OsString>,
@@ -70,6 +90,12 @@ where
         return Err(ParseError::MissingText);
     };
     let first = first.to_string_lossy().into_owned();
+    if first == "--help" || first == "-h" {
+        return Ok(Mode::Help);
+    }
+    if first == "--version" || first == "-V" {
+        return Ok(Mode::Version);
+    }
     if first == "mcp" {
         return match args.next() {
             None => Ok(Mode::Mcp),
@@ -165,7 +191,7 @@ mod tests {
         let mode = parse(os(&["hola", "--lang", "es"])).expect("ok");
         match mode {
             Mode::Audio(a) => assert_eq!(a.lang, Language::Spanish),
-            Mode::Mcp => panic!("expected audio mode"),
+            other => panic!("expected audio mode, got {other:?}"),
         }
     }
 
@@ -186,7 +212,7 @@ mod tests {
             let mode = parse(os(&["x", "--lang", flag])).expect("ok");
             match mode {
                 Mode::Audio(a) => assert_eq!(a.lang, lang, "flag {flag}"),
-                Mode::Mcp => panic!("expected audio mode"),
+                other => panic!("expected audio mode, got {other:?}"),
             }
         }
     }
@@ -196,7 +222,7 @@ mod tests {
         let mode = parse(os(&["hi", "--rate", "150"])).expect("ok");
         match mode {
             Mode::Audio(a) => assert_eq!(a.rate.map(Rate::value), Some(150)),
-            Mode::Mcp => panic!("expected audio mode"),
+            other => panic!("expected audio mode, got {other:?}"),
         }
     }
 
@@ -205,7 +231,7 @@ mod tests {
         let mode = parse(os(&["hi", "--pitch", "60"])).expect("ok");
         match mode {
             Mode::Audio(a) => assert_eq!(a.pitch.map(Pitch::value), Some(60)),
-            Mode::Mcp => panic!("expected audio mode"),
+            other => panic!("expected audio mode, got {other:?}"),
         }
     }
 
@@ -214,7 +240,7 @@ mod tests {
         let mode = parse(os(&["hi", "--out", "/tmp/out.wav"])).expect("ok");
         match mode {
             Mode::Audio(a) => assert_eq!(a.out, Some(PathBuf::from("/tmp/out.wav"))),
-            Mode::Mcp => panic!("expected audio mode"),
+            other => panic!("expected audio mode, got {other:?}"),
         }
     }
 
@@ -356,5 +382,60 @@ mod tests {
         assert!(ParseError::Pitch(PitchError::OutOfRange)
             .to_string()
             .contains("99"));
+    }
+
+    #[test]
+    fn parses_help_flags() {
+        assert_eq!(parse(os(&["--help"])), Ok(Mode::Help));
+        assert_eq!(parse(os(&["-h"])), Ok(Mode::Help));
+    }
+
+    #[test]
+    fn parses_version_flags() {
+        assert_eq!(parse(os(&["--version"])), Ok(Mode::Version));
+        assert_eq!(parse(os(&["-V"])), Ok(Mode::Version));
+    }
+
+    #[test]
+    fn help_wins_over_trailing_arguments() {
+        assert_eq!(parse(os(&["--help", "--lang", "en"])), Ok(Mode::Help));
+    }
+
+    #[test]
+    fn usage_names_every_flag_and_language() {
+        let u = usage();
+        for token in ["--lang", "--rate", "--pitch", "--out", "mcp", "--help", "--version"] {
+            assert!(u.contains(token), "usage missing {token}: {u}");
+        }
+        assert!(u.contains("ru|en|es|de|fr|it|pt|zh|ja|ko"));
+    }
+
+    #[test]
+    fn usage_lists_the_environment_surface() {
+        let u = usage();
+        for var in [
+            "VOZ_OUT_DIR",
+            "VOZ_BACKEND",
+            "VOZ_NEURAL_ROOT",
+            "VOZ_NEURAL_BIN",
+            "VOZ_PIPER_BIN",
+            "VOZ_TIMEOUT_SECS",
+        ] {
+            assert!(u.contains(var), "usage missing {var}");
+        }
+    }
+
+    #[test]
+    fn version_line_carries_the_package_version() {
+        let v = version_line();
+        assert!(v.starts_with("voz "));
+        assert!(v.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn missing_text_error_shows_usage() {
+        let err = parse(os(&[])).unwrap_err();
+        assert_eq!(err, ParseError::MissingText);
+        assert!(err.to_string().contains("--lang"));
     }
 }

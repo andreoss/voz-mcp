@@ -6,7 +6,7 @@ use rmcp::transport::stdio;
 use voz_mcp::audio::synthesize;
 use voz_mcp::backend::{read_timeout_override, select_timeout, BackendPick};
 use voz_mcp::tts::Timeout;
-use voz_mcp::cli::{parse, AudioArgs, Mode};
+use voz_mcp::cli::{parse, usage, version_line, AudioArgs, Mode};
 use voz_mcp::server::{build_backend, build_mcp_server, select_backend_pick};
 
 fn out_dir() -> PathBuf {
@@ -20,6 +20,8 @@ async fn main() {
     let args = std::env::args_os().skip(1);
     match parse(args) {
         Ok(Mode::Mcp) => run_mcp().await,
+        Ok(Mode::Help) => println!("{}", usage()),
+        Ok(Mode::Version) => println!("{}", version_line()),
         Ok(Mode::Audio(audio)) => run_audio(audio),
         Err(e) => {
             eprintln!("{e}");

@@ -123,3 +123,8 @@ own it.
 
 See `doc/` for process, backlog and the coverage record, and
 `doc/adr/INDEX.adoc` for which design decisions currently hold.
+
+## License
+
+GPL-3.0-only; see `LICENSE`. The speech engines run as separate processes
+and none of their code is linked in (`doc/adr/ADR-0009.adoc`).

@@ -180,10 +180,27 @@ pub fn read_neural_bin_override() -> Option<PathBuf> {
     std::env::var_os("VOZ_NEURAL_BIN").map(PathBuf::from)
 }
 
+pub fn default_root(xdg_data_home: Option<&OsStr>, home: Option<&OsStr>) -> PathBuf {
+    if let Some(xdg) = xdg_data_home
+        && !xdg.is_empty()
+    {
+        return PathBuf::from(xdg).join("voz");
+    }
+    if let Some(home) = home
+        && !home.is_empty()
+    {
+        return PathBuf::from(home).join(".local").join("share").join("voz");
+    }
+    PathBuf::from("/usr/local/share/voz")
+}
+
 pub fn neural_root(env_override: Option<&Path>) -> PathBuf {
     match env_override {
         Some(p) if p.exists() => p.to_path_buf(),
-        _ => PathBuf::from("/user/modelz"),
+        _ => default_root(
+            std::env::var_os("XDG_DATA_HOME").as_deref(),
+            std::env::var_os("HOME").as_deref(),
+        ),
     }
 }
 
@@ -268,15 +285,22 @@ mod tests {
         assert_eq!(root, dir);
     }
 
+    fn env_default_root() -> PathBuf {
+        default_root(
+            std::env::var_os("XDG_DATA_HOME").as_deref(),
+            std::env::var_os("HOME").as_deref(),
+        )
+    }
+
     #[test]
     fn neural_root_ignores_missing_override() {
         let missing = PathBuf::from("/definitely/not/a/real/modelz-root");
-        assert_eq!(neural_root(Some(&missing)), PathBuf::from("/user/modelz"));
+        assert_eq!(neural_root(Some(&missing)), env_default_root());
     }
 
     #[test]
     fn neural_root_defaults_without_override() {
-        assert_eq!(neural_root(None), PathBuf::from("/user/modelz"));
+        assert_eq!(neural_root(None), env_default_root());
     }
 
     fn choice(s: &str) -> BackendChoice {
@@ -446,5 +470,48 @@ mod tests {
     fn read_neural_bin_override_reflects_process_env() {
         let expected = std::env::var_os("VOZ_NEURAL_BIN").map(PathBuf::from);
         assert_eq!(read_neural_bin_override(), expected);
+    }
+
+    #[test]
+    fn default_root_prefers_xdg_data_home() {
+        assert_eq!(
+            default_root(Some(OsStr::new("/x/data")), Some(OsStr::new("/home/a"))),
+            PathBuf::from("/x/data/voz")
+        );
+    }
+
+    #[test]
+    fn default_root_falls_back_to_home_share() {
+        assert_eq!(
+            default_root(None, Some(OsStr::new("/home/a"))),
+            PathBuf::from("/home/a/.local/share/voz")
+        );
+    }
+
+    #[test]
+    fn default_root_ignores_empty_xdg() {
+        assert_eq!(
+            default_root(Some(OsStr::new("")), Some(OsStr::new("/home/a"))),
+            PathBuf::from("/home/a/.local/share/voz")
+        );
+    }
+
+    #[test]
+    fn default_root_without_home_uses_system_share() {
+        assert_eq!(
+            default_root(None, None),
+            PathBuf::from("/usr/local/share/voz")
+        );
+    }
+
+    #[test]
+    fn default_root_carries_no_personal_path() {
+        for r in [
+            default_root(Some(OsStr::new("/x")), None),
+            default_root(None, Some(OsStr::new("/home/a"))),
+            default_root(None, None),
+        ] {
+            assert!(!r.to_string_lossy().contains("/user/modelz"));
+        }
     }
 }

@@ -144,7 +144,8 @@ CLI_SIZE="$(wc -c < "$CLI_OUT")"
 
 echo "cli smoke ok: $CLI_OUT ($CLI_SIZE bytes)"
 
-FALLBACK_BIN="${VOZ_PIPER_BIN:-/user/modelz/piper/bin/piper}"
+VOZ_ROOT_DEFAULT="${XDG_DATA_HOME:-$HOME/.local/share}/voz"
+FALLBACK_BIN="${VOZ_PIPER_BIN:-${VOZ_NEURAL_ROOT:-$VOZ_ROOT_DEFAULT}/piper/bin/piper}"
 
 if [ -x "$FALLBACK_BIN" ]; then
   FB_OUT="$SMOKE_DIR/fallback-en.wav"

@@ -354,7 +354,14 @@ fn server_lists_readback_after_speak() {
 
 #[test]
 fn piper_cli_speaks_when_neural_absent_and_rejects_uncovered_language() {
-    let piper_bin = std::path::PathBuf::from("/user/modelz/piper/bin/piper");
+    let root = match std::env::var_os("XDG_DATA_HOME") {
+        Some(x) if !x.is_empty() => std::path::PathBuf::from(x).join("voz"),
+        _ => std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+            .join(".local")
+            .join("share")
+            .join("voz"),
+    };
+    let piper_bin = root.join("piper").join("bin").join("piper");
     if !piper_bin.exists() {
         return;
     }

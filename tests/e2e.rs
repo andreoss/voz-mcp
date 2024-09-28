@@ -435,3 +435,37 @@ fn forcing_an_undiscovered_backend_fails_loudly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("neural backend not available"), "{stderr}");
 }
+
+#[test]
+fn synthesis_timeout_is_bounded_and_reported() {
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-timeout-{}", std::process::id()));
+    std::fs::create_dir_all(&out_dir).expect("mkdir out");
+    let started = std::time::Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("timeout probe")
+        .arg("--lang")
+        .arg("en")
+        .env("VOZ_OUT_DIR", &out_dir)
+        .env("VOZ_TIMEOUT_SECS", "1")
+        .output()
+        .expect("run cli");
+    let elapsed = started.elapsed();
+    std::fs::remove_dir_all(&out_dir).ok();
+    assert!(!output.status.success(), "timed-out synthesis must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("exceeded"), "{stderr}");
+    assert!(elapsed < std::time::Duration::from_secs(60), "{elapsed:?}");
+}
+
+#[test]
+fn unusable_timeout_override_is_rejected() {
+    let output = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("probe")
+        .env("VOZ_TIMEOUT_SECS", "soon")
+        .output()
+        .expect("run cli");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("soon"), "{stderr}");
+    assert!(stderr.contains("86400"), "{stderr}");
+}

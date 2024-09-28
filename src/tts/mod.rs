@@ -135,16 +135,54 @@ pub trait Tts: Send + Sync {
     fn speak(&self, req: &SpeakRequest) -> Result<Speech, TtsError>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timeout(std::time::Duration);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeoutError {
+    NotANumber,
+    OutOfRange,
+}
+
+impl Timeout {
+    pub const DEFAULT_SECS: u64 = 600;
+    pub const MIN_SECS: u64 = 1;
+    pub const MAX_SECS: u64 = 86400;
+
+    pub fn parse(s: &str) -> Result<Timeout, TimeoutError> {
+        let secs: u64 = s.parse().map_err(|_| TimeoutError::NotANumber)?;
+        if (Self::MIN_SECS..=Self::MAX_SECS).contains(&secs) {
+            Ok(Timeout(std::time::Duration::from_secs(secs)))
+        } else {
+            Err(TimeoutError::OutOfRange)
+        }
+    }
+
+    pub fn default_timeout() -> Timeout {
+        Timeout(std::time::Duration::from_secs(Self::DEFAULT_SECS))
+    }
+
+    pub fn seconds(self) -> u64 {
+        self.0.as_secs()
+    }
+
+    pub fn duration(self) -> std::time::Duration {
+        self.0
+    }
+}
+
 pub(crate) fn spawn_feed_with_retry(
     cmd: &mut std::process::Command,
     input: &[u8],
+    limit: Timeout,
 ) -> std::io::Result<std::process::Output> {
-    retry_on_etxtbsy(|| feed_child(cmd, input), std::thread::sleep)
+    retry_on_etxtbsy(|| feed_child(cmd, input, limit), std::thread::sleep)
 }
 
 fn feed_child(
     cmd: &mut std::process::Command,
     input: &[u8],
+    limit: Timeout,
 ) -> std::io::Result<std::process::Output> {
     use std::io::Write;
     let mut child = cmd
@@ -155,7 +193,46 @@ fn feed_child(
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(input);
     }
-    child.wait_with_output()
+    wait_bounded(child, limit)
+}
+
+fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    })
+}
+
+fn wait_bounded(
+    mut child: std::process::Child,
+    limit: Timeout,
+) -> std::io::Result<std::process::Output> {
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(std::process::Output {
+                status,
+                stdout: out.join().unwrap_or_default(),
+                stderr: err.join().unwrap_or_default(),
+            });
+        }
+        if started.elapsed() >= limit.duration() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = out.join();
+            let _ = err.join();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("engine exceeded {} s", limit.seconds()),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 fn retry_on_etxtbsy<F>(
@@ -296,5 +373,55 @@ mod tests {
         assert_eq!(result.unwrap_err().raw_os_error(), Some(26));
         assert_eq!(attempts, 20);
         assert_eq!(sleeps, 19);
+    }
+
+    #[test]
+    fn parses_timeout_seconds() {
+        assert_eq!(Timeout::parse("1").map(Timeout::seconds), Ok(1));
+        assert_eq!(Timeout::parse("600").map(Timeout::seconds), Ok(600));
+        assert_eq!(Timeout::parse("86400").map(Timeout::seconds), Ok(86400));
+    }
+
+    #[test]
+    fn rejects_timeout_out_of_bounds() {
+        assert_eq!(Timeout::parse("0"), Err(TimeoutError::OutOfRange));
+        assert_eq!(Timeout::parse("86401"), Err(TimeoutError::OutOfRange));
+    }
+
+    #[test]
+    fn rejects_non_numeric_timeout() {
+        assert_eq!(Timeout::parse("soon"), Err(TimeoutError::NotANumber));
+        assert_eq!(Timeout::parse(""), Err(TimeoutError::NotANumber));
+        assert_eq!(Timeout::parse("-5"), Err(TimeoutError::NotANumber));
+    }
+
+    #[test]
+    fn default_timeout_is_ten_minutes() {
+        assert_eq!(Timeout::default_timeout().seconds(), 600);
+        assert_eq!(
+            Timeout::default_timeout().duration(),
+            std::time::Duration::from_secs(600)
+        );
+    }
+
+    #[test]
+    fn wait_bounded_returns_output_of_a_fast_child() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg("printf done");
+        let out = spawn_feed_with_retry(&mut cmd, b"", Timeout::default_timeout()).expect("ok");
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"done");
+    }
+
+    #[test]
+    fn wait_bounded_kills_a_stalled_child_and_reports_timeout() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c").arg("sleep 30");
+        let limit = Timeout::parse("1").expect("timeout");
+        let started = std::time::Instant::now();
+        let err = spawn_feed_with_retry(&mut cmd, b"", limit).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(err.to_string().contains("1"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
     }
 }

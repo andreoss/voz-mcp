@@ -2,13 +2,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{Language, SpeakRequest, Speech, Tts, TtsError};
+use super::{Language, SpeakRequest, Speech, Timeout, Tts, TtsError};
 use crate::backend::PiperPaths;
 
 pub struct Piper {
     bin: PathBuf,
     voices: PathBuf,
     out_dir: PathBuf,
+    timeout: Timeout,
     counter: AtomicU64,
 }
 
@@ -17,6 +18,7 @@ impl Piper {
         bin: impl Into<PathBuf>,
         voices: impl Into<PathBuf>,
         out_dir: impl Into<PathBuf>,
+        timeout: Timeout,
     ) -> Self {
         let out_dir = out_dir.into();
         std::fs::create_dir_all(&out_dir).expect("failed to create output directory");
@@ -24,6 +26,7 @@ impl Piper {
             bin: bin.into(),
             voices: voices.into(),
             out_dir,
+            timeout,
             counter: AtomicU64::new(0),
         }
     }
@@ -174,7 +177,7 @@ impl Tts for Piper {
             cmd.args(["--length_scale", &scale]);
         }
         let output =
-            super::spawn_feed_with_retry(&mut cmd, text.as_bytes()).map_err(|e| TtsError {
+            super::spawn_feed_with_retry(&mut cmd, text.as_bytes(), self.timeout).map_err(|e| TtsError {
                 reason: format!("vits spawn failed: {e}"),
             })?;
         if !output.status.success() {
@@ -303,7 +306,7 @@ mod tests {
         }
 
         fn tts(&self) -> Piper {
-            Piper::new(self.bin(), self.voices(), self.dir.join("out"))
+            Piper::new(self.bin(), self.voices(), self.dir.join("out"), Timeout::default_timeout())
         }
     }
 

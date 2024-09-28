@@ -9,7 +9,7 @@ use crate::tool::Server;
 use crate::tts::null::Null;
 use crate::tts::piper::{scan_piper, Piper};
 use crate::tts::qwen::{scan_modelz, Qwen};
-use crate::tts::Tts;
+use crate::tts::{Timeout, Tts};
 
 pub fn discover_backend_pick(choice: BackendChoice) -> Result<BackendPick, SelectionError> {
     let root = neural_root(read_neural_root_override().as_deref());
@@ -22,18 +22,18 @@ pub fn select_backend_pick() -> Result<BackendPick, SelectionError> {
     discover_backend_pick(backend_choice(read_backend_choice_override().as_deref())?)
 }
 
-pub fn build_backend(pick: BackendPick, out_dir: PathBuf) -> Box<dyn Tts> {
+pub fn build_backend(pick: BackendPick, out_dir: PathBuf, timeout: Timeout) -> Box<dyn Tts> {
     match pick {
         BackendPick::Neural { bin, talker, codec } => {
-            Box::new(Qwen::new(bin, talker, codec, out_dir))
+            Box::new(Qwen::new(bin, talker, codec, out_dir, timeout))
         }
-        BackendPick::Piper { bin, voices } => Box::new(Piper::new(bin, voices, out_dir)),
+        BackendPick::Piper { bin, voices } => Box::new(Piper::new(bin, voices, out_dir, timeout)),
         BackendPick::Null => Box::new(Null),
     }
 }
 
-pub fn build_mcp_server(pick: BackendPick, out_dir: PathBuf) -> Server {
-    let backend = build_backend(pick, out_dir.clone());
+pub fn build_mcp_server(pick: BackendPick, out_dir: PathBuf, timeout: Timeout) -> Server {
+    let backend = build_backend(pick, out_dir.clone(), timeout);
     let readback = Box::new(FsReadback::new(out_dir));
     Server::new(backend, readback)
 }
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn build_backend_null_reports_dev_null() {
         let out = std::env::temp_dir().join(format!("voz-server-null-{}", std::process::id()));
-        let backend = build_backend(BackendPick::Null, out.clone());
+        let backend = build_backend(BackendPick::Null, out.clone(), Timeout::default_timeout());
         let speech = backend
             .speak(&SpeakRequest {
                 text: "hi".to_string(),
@@ -85,6 +85,7 @@ mod tests {
                 codec: PathBuf::from("/nonexistent-codec.gguf"),
             },
             out.clone(),
+            Timeout::default_timeout(),
         );
         assert!(out.exists());
         std::fs::remove_dir_all(&out).ok();
@@ -99,6 +100,7 @@ mod tests {
                 voices: PathBuf::from("/nonexistent-voices"),
             },
             out.clone(),
+            Timeout::default_timeout(),
         );
         assert!(out.exists());
         std::fs::remove_dir_all(&out).ok();
@@ -107,7 +109,7 @@ mod tests {
     #[test]
     fn build_mcp_server_constructs_with_null_pick() {
         let out = std::env::temp_dir().join(format!("voz-server-mcp-null-{}", std::process::id()));
-        let _server = build_mcp_server(BackendPick::Null, out.clone());
+        let _server = build_mcp_server(BackendPick::Null, out.clone(), Timeout::default_timeout());
         std::fs::remove_dir_all(&out).ok();
     }
 }

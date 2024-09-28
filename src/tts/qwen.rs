@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{Language, SpeakRequest, Speech, Tts, TtsError};
+use super::{Language, SpeakRequest, Speech, Timeout, Tts, TtsError};
 use crate::backend::NeuralPaths;
 use crate::wav;
 
@@ -11,6 +11,7 @@ pub struct Qwen {
     talker: PathBuf,
     codec: PathBuf,
     out_dir: PathBuf,
+    timeout: Timeout,
     counter: AtomicU64,
 }
 
@@ -20,6 +21,7 @@ impl Qwen {
         talker: impl Into<PathBuf>,
         codec: impl Into<PathBuf>,
         out_dir: impl Into<PathBuf>,
+        timeout: Timeout,
     ) -> Self {
         let out_dir = out_dir.into();
         std::fs::create_dir_all(&out_dir).expect("failed to create output directory");
@@ -28,6 +30,7 @@ impl Qwen {
             talker: talker.into(),
             codec: codec.into(),
             out_dir,
+            timeout,
             counter: AtomicU64::new(0),
         }
     }
@@ -69,7 +72,7 @@ impl Tts for Qwen {
             .arg("-o")
             .arg(&path)
             .args(["--format", "wav16"]);
-        let output = super::spawn_feed_with_retry(&mut cmd, text.as_bytes()).map_err(|e| {
+        let output = super::spawn_feed_with_retry(&mut cmd, text.as_bytes(), self.timeout).map_err(|e| {
             TtsError {
                 reason: format!("neural spawn failed: {e}"),
             }
@@ -196,7 +199,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_text() {
-        let tts = Qwen::new("/nonexistent", "/t.gguf", "/c.gguf", std::env::temp_dir());
+        let tts = Qwen::new("/nonexistent", "/t.gguf", "/c.gguf", std::env::temp_dir(), Timeout::default_timeout());
         assert!(tts.speak(&request("   ", Language::English)).is_err());
     }
 
@@ -204,7 +207,7 @@ mod tests {
     fn happy_path_writes_wav_and_feeds_text_via_stdin() {
         let stub = Stub::emitting_fixture("happy");
         let out = stub.dir.join("out");
-        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out);
+        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
         let speech = tts
             .speak(&request("hello there", Language::English))
             .expect("speak ok");
@@ -235,7 +238,7 @@ mod tests {
         ] {
             let stub = Stub::emitting_fixture("langs");
             let out = stub.dir.join("out");
-            let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out);
+            let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
             tts.speak(&request("hola", lang)).expect("speak ok");
             let args = std::fs::read_to_string(stub.dir.join("args.txt")).expect("args");
             assert!(args.contains(flag), "args were: {args}");
@@ -245,7 +248,7 @@ mod tests {
     #[test]
     fn spawn_failure_surfaces_error() {
         let out = std::env::temp_dir().join(format!("voz-qwen-spawn-{}", std::process::id()));
-        let tts = Qwen::new("/definitely/not/a/real/binary", "/t.gguf", "/c.gguf", &out);
+        let tts = Qwen::new("/definitely/not/a/real/binary", "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
         let err = tts.speak(&request("hello", Language::English)).unwrap_err();
         assert!(err.reason.contains("neural spawn failed"));
         std::fs::remove_dir_all(&out).ok();
@@ -255,7 +258,7 @@ mod tests {
     fn nonzero_exit_surfaces_stderr() {
         let stub = Stub::new("fail", "#!/bin/sh\necho boom 1>&2\nexit 1\n");
         let out = stub.dir.join("out");
-        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out);
+        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
         let err = tts.speak(&request("hello", Language::English)).unwrap_err();
         assert!(err.reason.contains("neural engine exited with"));
         assert!(err.reason.contains("boom"));
@@ -265,7 +268,7 @@ mod tests {
     fn missing_output_file_surfaces_error() {
         let stub = Stub::new("noout", "#!/bin/sh\ncat > /dev/null\nexit 0\n");
         let out = stub.dir.join("out");
-        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out);
+        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
         let err = tts.speak(&request("hello", Language::English)).unwrap_err();
         assert!(err.reason.contains("neural output missing"));
     }
@@ -277,7 +280,7 @@ mod tests {
             "#!/bin/sh\nout=\"\"\nprev=\"\"\nfor a in \"$@\"; do\n  if [ \"$prev\" = \"-o\" ]; then out=\"$a\"; fi\n  prev=\"$a\"\ndone\ncat > /dev/null\nprintf 'not audio' > \"$out\"\n",
         );
         let out = stub.dir.join("out");
-        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out);
+        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
         let err = tts.speak(&request("hello", Language::English)).unwrap_err();
         assert!(err.reason.contains("neural output invalid"));
     }

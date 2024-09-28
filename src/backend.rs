@@ -2,6 +2,8 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::tts::{Timeout, TimeoutError};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NeuralPaths {
     pub bin: PathBuf,
@@ -69,12 +71,14 @@ impl BackendChoice {
 pub enum SelectionError {
     UnknownChoice(String),
     Unavailable(BackendChoice),
+    BadTimeout(String),
 }
 
 impl SelectionError {
     pub fn exit_code(&self) -> i32 {
         match self {
             SelectionError::UnknownChoice(_) => 2,
+            SelectionError::BadTimeout(_) => 2,
             SelectionError::Unavailable(_) => 1,
         }
     }
@@ -89,6 +93,12 @@ impl fmt::Display for SelectionError {
             SelectionError::Unavailable(choice) => {
                 write!(f, "{} backend not available", choice.code())
             }
+            SelectionError::BadTimeout(value) => write!(
+                f,
+                "unsupported timeout {value}, expected whole seconds {}..{}",
+                Timeout::MIN_SECS,
+                Timeout::MAX_SECS
+            ),
         }
     }
 }
@@ -139,6 +149,23 @@ fn piper_pick(p: &PiperPaths) -> BackendPick {
 
 pub fn read_backend_choice_override() -> Option<OsString> {
     std::env::var_os("VOZ_BACKEND")
+}
+
+pub fn read_timeout_override() -> Option<OsString> {
+    std::env::var_os("VOZ_TIMEOUT_SECS")
+}
+
+pub fn select_timeout(env_override: Option<&OsStr>) -> Result<Timeout, SelectionError> {
+    let Some(raw) = env_override else {
+        return Ok(Timeout::default_timeout());
+    };
+    let raw = raw.to_string_lossy();
+    match Timeout::parse(&raw) {
+        Ok(t) => Ok(t),
+        Err(TimeoutError::NotANumber) | Err(TimeoutError::OutOfRange) => {
+            Err(SelectionError::BadTimeout(raw.into_owned()))
+        }
+    }
 }
 
 pub fn read_neural_root_override() -> Option<PathBuf> {
@@ -381,5 +408,33 @@ mod tests {
     fn read_backend_choice_override_reflects_process_env() {
         let expected = std::env::var_os("VOZ_BACKEND");
         assert_eq!(read_backend_choice_override(), expected);
+    }
+
+    #[test]
+    fn select_timeout_defaults_without_override() {
+        assert_eq!(select_timeout(None), Ok(Timeout::default_timeout()));
+    }
+
+    #[test]
+    fn select_timeout_reads_override() {
+        assert_eq!(
+            select_timeout(Some(OsStr::new("30"))).map(Timeout::seconds),
+            Ok(30)
+        );
+    }
+
+    #[test]
+    fn select_timeout_rejects_bad_values() {
+        let err = select_timeout(Some(OsStr::new("soon"))).unwrap_err();
+        assert_eq!(err, SelectionError::BadTimeout("soon".to_string()));
+        assert_eq!(err.exit_code(), 2);
+        let text = err.to_string();
+        assert!(text.contains("soon"));
+        assert!(text.contains("86400"));
+    }
+
+    #[test]
+    fn read_timeout_override_reflects_process_env() {
+        assert_eq!(read_timeout_override(), std::env::var_os("VOZ_TIMEOUT_SECS"));
     }
 }

@@ -4,7 +4,8 @@ use rmcp::service::serve_server;
 use rmcp::transport::stdio;
 
 use voz_mcp::audio::synthesize;
-use voz_mcp::backend::BackendPick;
+use voz_mcp::backend::{read_timeout_override, select_timeout, BackendPick};
+use voz_mcp::tts::Timeout;
 use voz_mcp::cli::{parse, AudioArgs, Mode};
 use voz_mcp::server::{build_backend, build_mcp_server, select_backend_pick};
 
@@ -27,6 +28,16 @@ async fn main() {
     }
 }
 
+fn timeout_or_exit() -> Timeout {
+    match select_timeout(read_timeout_override().as_deref()) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(e.exit_code());
+        }
+    }
+}
+
 fn pick_or_exit() -> BackendPick {
     match select_backend_pick() {
         Ok(pick) => pick,
@@ -38,7 +49,7 @@ fn pick_or_exit() -> BackendPick {
 }
 
 async fn run_mcp() {
-    let service = build_mcp_server(pick_or_exit(), out_dir());
+    let service = build_mcp_server(pick_or_exit(), out_dir(), timeout_or_exit());
     let server = serve_server(service, stdio()).await.expect("failed to serve");
     let _ = server.waiting().await;
 }
@@ -49,7 +60,7 @@ fn run_audio(args: AudioArgs) {
         eprintln!("no speech backend available");
         std::process::exit(1);
     }
-    let backend = build_backend(pick, out_dir());
+    let backend = build_backend(pick, out_dir(), timeout_or_exit());
     match synthesize(args, backend.as_ref()) {
         Ok(path) => println!("{}", path.display()),
         Err(e) => {

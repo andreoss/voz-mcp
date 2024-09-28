@@ -96,8 +96,11 @@ impl Tts for Qwen {
     }
 }
 
-pub fn scan_modelz(root: &Path) -> Option<NeuralPaths> {
-    let bin = root.join("qwentts").join("build").join("qwen-tts");
+pub fn scan_modelz(root: &Path, bin_override: Option<&Path>) -> Option<NeuralPaths> {
+    let bin = match bin_override {
+        Some(p) if p.exists() => p.to_path_buf(),
+        _ => root.join("qwentts").join("build").join("qwen-tts"),
+    };
     if !bin.exists() {
         return None;
     }
@@ -296,7 +299,7 @@ mod tests {
     fn scan_modelz_returns_none_without_runtime_bin() {
         let root = fake_modelz("nobin");
         std::fs::write(root.join("gguf").join("x-talker-y.gguf"), b"t").expect("write");
-        let hit = scan_modelz(&root);
+        let hit = scan_modelz(&root, None);
         std::fs::remove_dir_all(&root).ok();
         assert!(hit.is_none());
     }
@@ -306,7 +309,7 @@ mod tests {
         let root = fake_modelz("notalker");
         std::fs::write(root.join("qwentts").join("build").join("qwen-tts"), b"x").expect("write");
         std::fs::write(root.join("gguf").join("x-tokenizer-y.gguf"), b"c").expect("write");
-        let hit = scan_modelz(&root);
+        let hit = scan_modelz(&root, None);
         std::fs::remove_dir_all(&root).ok();
         assert!(hit.is_none());
     }
@@ -316,7 +319,7 @@ mod tests {
         let root = fake_modelz("nocodec");
         std::fs::write(root.join("qwentts").join("build").join("qwen-tts"), b"x").expect("write");
         std::fs::write(root.join("gguf").join("x-talker-y.gguf"), b"t").expect("write");
-        let hit = scan_modelz(&root);
+        let hit = scan_modelz(&root, None);
         std::fs::remove_dir_all(&root).ok();
         assert!(hit.is_none());
     }
@@ -326,7 +329,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("voz-modelz-noggufdir-{}", std::process::id()));
         std::fs::create_dir_all(root.join("qwentts").join("build")).expect("mkdir");
         std::fs::write(root.join("qwentts").join("build").join("qwen-tts"), b"x").expect("write");
-        let hit = scan_modelz(&root);
+        let hit = scan_modelz(&root, None);
         std::fs::remove_dir_all(&root).ok();
         assert!(hit.is_none());
     }
@@ -338,11 +341,49 @@ mod tests {
         std::fs::write(root.join("gguf").join("x-talker-y.gguf"), b"t").expect("write");
         std::fs::write(root.join("gguf").join("x-tokenizer-y.gguf"), b"c").expect("write");
         std::fs::write(root.join("gguf").join("talker-notes.txt"), b"n").expect("write");
-        let hit = scan_modelz(&root).expect("found");
+        let hit = scan_modelz(&root, None).expect("found");
         let ok = hit.bin.ends_with("qwentts/build/qwen-tts")
             && hit.talker.ends_with("gguf/x-talker-y.gguf")
             && hit.codec.ends_with("gguf/x-tokenizer-y.gguf");
         std::fs::remove_dir_all(&root).ok();
         assert!(ok);
+    }
+
+    #[test]
+    fn scan_modelz_prefers_existing_bin_override() {
+        let root = fake_modelz("binoverride");
+        std::fs::write(root.join("qwentts").join("build").join("qwen-tts"), b"x").expect("write");
+        std::fs::write(root.join("gguf").join("a-talker-b.gguf"), b"t").expect("write");
+        std::fs::write(root.join("gguf").join("a-tokenizer-b.gguf"), b"c").expect("write");
+        let elsewhere = root.join("elsewhere-qwen-tts");
+        std::fs::write(&elsewhere, b"x").expect("write");
+        let hit = scan_modelz(&root, Some(&elsewhere)).expect("found");
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(hit.bin, elsewhere);
+        assert!(hit.talker.ends_with("a-talker-b.gguf"));
+        assert!(hit.codec.ends_with("a-tokenizer-b.gguf"));
+    }
+
+    #[test]
+    fn scan_modelz_ignores_missing_bin_override() {
+        let root = fake_modelz("binmissing");
+        let default_bin = root.join("qwentts").join("build").join("qwen-tts");
+        std::fs::write(&default_bin, b"x").expect("write");
+        std::fs::write(root.join("gguf").join("a-talker-b.gguf"), b"t").expect("write");
+        std::fs::write(root.join("gguf").join("a-tokenizer-b.gguf"), b"c").expect("write");
+        let absent = std::path::PathBuf::from("/definitely/not/a/real/qwen-tts");
+        let hit = scan_modelz(&root, Some(&absent)).expect("found");
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(hit.bin, default_bin);
+    }
+
+    #[test]
+    fn scan_modelz_override_still_needs_weights_under_the_root() {
+        let root = fake_modelz("binnoweights");
+        let elsewhere = root.join("elsewhere-qwen-tts");
+        std::fs::write(&elsewhere, b"x").expect("write");
+        let hit = scan_modelz(&root, Some(&elsewhere));
+        std::fs::remove_dir_all(&root).ok();
+        assert!(hit.is_none());
     }
 }

@@ -86,6 +86,7 @@ Restart the client after editing its config; configs load once at startup.
 | `VOZ_OUT_DIR` | `./audio` | Output directory for synthesized speech |
 | `VOZ_BACKEND` | `auto` | Backend selection (see below) |
 | `VOZ_NEURAL_ROOT` | `/user/modelz` | Modelz root override; ignored if the path does not exist |
+| `VOZ_NEURAL_BIN` | auto-discovered | Neural engine executable; weights are still resolved under the modelz root |
 | `VOZ_PIPER_BIN` | auto-discovered | Fallback engine executable; voices are read from `../voices` next to it |
 | `VOZ_TIMEOUT_SECS` | `600` | Synthesis budget in whole seconds, `1..86400` |
 

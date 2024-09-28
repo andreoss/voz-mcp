@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use crate::backend::{
     backend_choice, neural_root, pick_backend, read_backend_choice_override,
-    read_neural_root_override, read_piper_bin_override, BackendChoice, BackendPick, SelectionError,
+    read_neural_bin_override, read_neural_root_override, read_piper_bin_override, BackendChoice,
+    BackendPick, SelectionError,
 };
 use crate::readback::fs::FsReadback;
 use crate::tool::Server;
@@ -13,7 +14,7 @@ use crate::tts::{Timeout, Tts};
 
 pub fn discover_backend_pick(choice: BackendChoice) -> Result<BackendPick, SelectionError> {
     let root = neural_root(read_neural_root_override().as_deref());
-    let neural = scan_modelz(&root);
+    let neural = scan_modelz(&root, read_neural_bin_override().as_deref());
     let piper = scan_piper(&root, read_piper_bin_override().as_deref());
     pick_backend(choice, neural.as_ref(), piper.as_ref())
 }

@@ -176,6 +176,10 @@ pub fn read_piper_bin_override() -> Option<PathBuf> {
     std::env::var_os("VOZ_PIPER_BIN").map(PathBuf::from)
 }
 
+pub fn read_neural_bin_override() -> Option<PathBuf> {
+    std::env::var_os("VOZ_NEURAL_BIN").map(PathBuf::from)
+}
+
 pub fn neural_root(env_override: Option<&Path>) -> PathBuf {
     match env_override {
         Some(p) if p.exists() => p.to_path_buf(),
@@ -436,5 +440,11 @@ mod tests {
     #[test]
     fn read_timeout_override_reflects_process_env() {
         assert_eq!(read_timeout_override(), std::env::var_os("VOZ_TIMEOUT_SECS"));
+    }
+
+    #[test]
+    fn read_neural_bin_override_reflects_process_env() {
+        let expected = std::env::var_os("VOZ_NEURAL_BIN").map(PathBuf::from);
+        assert_eq!(read_neural_bin_override(), expected);
     }
 }

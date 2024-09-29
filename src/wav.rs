@@ -89,6 +89,80 @@ pub fn validate(bytes: &[u8]) -> Result<WavInfo, WavError> {
     })
 }
 
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Signal {
+    pub frames: u64,
+    pub seconds: f64,
+    pub peak: i16,
+    pub rms: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalError {
+    Wav(WavError),
+    NotS16,
+    OddSampleData,
+}
+
+impl Signal {
+    pub const SILENCE_PEAK: i16 = 64;
+    pub const SILENCE_RMS: f64 = 16.0;
+
+    pub fn is_silent(&self) -> bool {
+        self.peak < Self::SILENCE_PEAK || self.rms < Self::SILENCE_RMS
+    }
+}
+
+fn bits_and_data(bytes: &[u8]) -> Option<(u16, &[u8])> {
+    let mut bits = None;
+    let mut offset = 12;
+    while offset + 8 <= bytes.len() {
+        let id = &bytes[offset..offset + 4];
+        let size = read_u32(bytes, offset + 4)? as usize;
+        let body = offset + 8;
+        if id == b"data" {
+            let available = bytes.len() - body;
+            return Some((bits?, &bytes[body..body + size.min(available)]));
+        }
+        if id == b"fmt " && size >= 16 {
+            bits = read_u16(bytes, body + 14);
+        }
+        offset = body + size + (size % 2);
+    }
+    None
+}
+
+pub fn measure(bytes: &[u8]) -> Result<Signal, SignalError> {
+    let info = validate(bytes).map_err(SignalError::Wav)?;
+    let (bits, data) =
+        bits_and_data(bytes).ok_or(SignalError::Wav(WavError::MissingDataChunk))?;
+    if bits != 16 {
+        return Err(SignalError::NotS16);
+    }
+    if !data.len().is_multiple_of(2) {
+        return Err(SignalError::OddSampleData);
+    }
+    let samples: Vec<i16> = data
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    if samples.is_empty() {
+        return Err(SignalError::Wav(WavError::ZeroDataSize));
+    }
+    let peak = samples.iter().map(|s| s.saturating_abs()).max().unwrap_or(0);
+    let sum: f64 = samples.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
+    let rms = (sum / samples.len() as f64).sqrt();
+    let frames = samples.len() as u64 / u64::from(info.channels);
+    let seconds = frames as f64 / f64::from(info.sample_rate);
+    Ok(Signal {
+        frames,
+        seconds,
+        peak,
+        rms,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +314,77 @@ mod tests {
     fn rejects_zero_data_size() {
         let wav = minimal_wav(1, 1, 22050, &[]);
         assert_eq!(validate(&wav), Err(WavError::ZeroDataSize));
+    }
+
+    fn s16(samples: &[i16]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"RIFF");
+        v.extend_from_slice(&(36 + samples.len() as u32 * 2).to_le_bytes());
+        v.extend_from_slice(b"WAVE");
+        v.extend_from_slice(b"fmt ");
+        v.extend_from_slice(&16u32.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&22050u32.to_le_bytes());
+        v.extend_from_slice(&44100u32.to_le_bytes());
+        v.extend_from_slice(&2u16.to_le_bytes());
+        v.extend_from_slice(&16u16.to_le_bytes());
+        v.extend_from_slice(b"data");
+        v.extend_from_slice(&(samples.len() as u32 * 2).to_le_bytes());
+        for s in samples {
+            v.extend_from_slice(&s.to_le_bytes());
+        }
+        v
+    }
+
+    fn tone(n: usize, amp: i16) -> Vec<i16> {
+        (0..n)
+            .map(|i| if i % 2 == 0 { amp } else { -amp })
+            .collect()
+    }
+
+    #[test]
+    fn measures_duration_peak_and_rms_of_speech_like_audio() {
+        let bytes = s16(&tone(22050, 8000));
+        let m = measure(&bytes).expect("measured");
+        assert_eq!(m.frames, 22050);
+        assert!((m.seconds - 1.0).abs() < 0.01, "{}", m.seconds);
+        assert_eq!(m.peak, 8000);
+        assert!((m.rms - 8000.0).abs() < 1.0, "{}", m.rms);
+        assert!(!m.is_silent());
+    }
+
+    #[test]
+    fn flags_all_zero_audio_as_silent() {
+        let m = measure(&s16(&vec![0i16; 22050])).expect("measured");
+        assert_eq!(m.peak, 0);
+        assert_eq!(m.rms, 0.0);
+        assert!(m.is_silent());
+    }
+
+    #[test]
+    fn flags_near_silence_below_the_floor_as_silent() {
+        let m = measure(&s16(&tone(22050, 2))).expect("measured");
+        assert!(m.peak > 0);
+        assert!(m.is_silent(), "peak {} rms {}", m.peak, m.rms);
+    }
+
+    #[test]
+    fn rejects_audio_that_is_not_valid_wav() {
+        assert!(measure(b"not a wav at all").is_err());
+    }
+
+    #[test]
+    fn rejects_non_s16_payload() {
+        let mut bytes = s16(&tone(64, 1000));
+        bytes[34] = 8;
+        assert_eq!(measure(&bytes), Err(SignalError::NotS16));
+    }
+
+    #[test]
+    fn rejects_odd_length_sample_data() {
+        let mut bytes = s16(&tone(64, 1000));
+        bytes.pop();
+        assert!(measure(&bytes).is_err());
     }
 }

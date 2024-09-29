@@ -123,7 +123,8 @@ against the real stack. `SKIP_SMOKE=1` stops before the smoke stages. The
 stage list is not repeated here; `doc/Pilot.adoc` and `doc/COVERAGE.adoc`
 own it.
 
-Provisioning a host: `doc/Provisioning.adoc`.
+Provisioning a host: `doc/Provisioning.adoc`. User stories and what proves
+them: `doc/Stories.adoc`.
 
 See `doc/` for process, backlog and the coverage record, and
 `doc/adr/INDEX.adoc` for which design decisions currently hold.

@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use voz_mcp::wav::validate;
+use voz_mcp::wav::{measure, validate};
 
 fn send_msg(w: &mut impl Write, msg: &str) {
     writeln!(w, "{msg}").expect("write");
@@ -89,7 +89,7 @@ fn neural_cli_yields_valid_wav_and_distinct_bytes_per_language() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-neural-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).expect("mkdir out");
     let mut outputs = Vec::new();
-    for lang in ["en", "ru", "es", "de", "ja"] {
+    for lang in ["ru", "en", "es", "de", "fr", "it", "pt", "zh", "ja", "ko"] {
         let out = out_dir.join(format!("{lang}.wav"));
         let status = Command::new(env!("CARGO_BIN_EXE_voz"))
             .arg("neural probe")
@@ -107,6 +107,8 @@ fn neural_cli_yields_valid_wav_and_distinct_bytes_per_language() {
     }
     for (lang, bytes) in &outputs {
         assert!(validate(bytes).is_ok(), "{lang} output not a valid wav");
+        let m = measure(bytes).unwrap_or_else(|e| panic!("{lang} not measurable: {e:?}"));
+        assert!(!m.is_silent(), "{lang} silent: peak {} rms {:.1}", m.peak, m.rms);
     }
     for (i, (la, a)) in outputs.iter().enumerate() {
         for (lb, b) in outputs.iter().skip(i + 1) {
@@ -368,7 +370,7 @@ fn piper_cli_speaks_when_neural_absent_and_rejects_uncovered_language() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-piper-out-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).expect("mkdir out");
     let mut outputs = Vec::new();
-    for lang in ["en", "ru", "es"] {
+    for lang in ["ru", "en", "es", "de", "fr", "it", "pt", "zh", "ko"] {
         let out = out_dir.join(format!("{lang}.wav"));
         let status = Command::new(env!("CARGO_BIN_EXE_voz"))
             .arg("fallback probe")
@@ -392,6 +394,8 @@ fn piper_cli_speaks_when_neural_absent_and_rejects_uncovered_language() {
         assert_eq!(info.audio_format, 1, "{lang} not pcm");
         assert_eq!(info.sample_rate, 22050, "{lang} wrong sample rate");
         assert!(info.data_size > 20000, "{lang} suspiciously short");
+        let m = measure(bytes).unwrap_or_else(|e| panic!("{lang} not measurable: {e:?}"));
+        assert!(!m.is_silent(), "{lang} silent: peak {} rms {:.1}", m.peak, m.rms);
     }
     for (i, (la, a)) in outputs.iter().enumerate() {
         for (lb, b) in outputs.iter().skip(i + 1) {

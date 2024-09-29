@@ -140,7 +140,7 @@ pub fn measure(bytes: &[u8]) -> Result<Signal, SignalError> {
     if bits != 16 {
         return Err(SignalError::NotS16);
     }
-    if !data.len().is_multiple_of(2) {
+    if data.len() % 2 != 0 {
         return Err(SignalError::OddSampleData);
     }
     let samples: Vec<i16> = data

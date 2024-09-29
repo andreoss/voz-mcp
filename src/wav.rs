@@ -3,7 +3,9 @@ pub struct WavInfo {
     pub audio_format: u16,
     pub channels: u16,
     pub sample_rate: u32,
+    pub bits_per_sample: u16,
     pub data_size: u32,
+    pub data_offset: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,8 +43,8 @@ pub fn validate(bytes: &[u8]) -> Result<WavInfo, WavError> {
         return Err(WavError::BadMagic);
     }
 
-    let mut fmt: Option<(u16, u16, u32)> = None;
-    let mut data_size: Option<u32> = None;
+    let mut fmt: Option<(u16, u16, u32, u16)> = None;
+    let mut data: Option<(u32, usize)> = None;
     let mut offset = 12;
     while offset + 8 <= bytes.len() {
         let id = &bytes[offset..offset + 4];
@@ -50,7 +52,7 @@ pub fn validate(bytes: &[u8]) -> Result<WavInfo, WavError> {
         let body_start = offset + 8;
         if id == b"data" {
             let available = bytes.len() - body_start;
-            data_size = Some(size.min(available) as u32);
+            data = Some((size.min(available) as u32, body_start));
             break;
         }
         let body_end = body_start.checked_add(size).ok_or(WavError::Truncated)?;
@@ -61,12 +63,14 @@ pub fn validate(bytes: &[u8]) -> Result<WavInfo, WavError> {
             let audio_format = read_u16(bytes, body_start).ok_or(WavError::Truncated)?;
             let channels = read_u16(bytes, body_start + 2).ok_or(WavError::Truncated)?;
             let sample_rate = read_u32(bytes, body_start + 4).ok_or(WavError::Truncated)?;
-            fmt = Some((audio_format, channels, sample_rate));
+            let bits = read_u16(bytes, body_start + 14).ok_or(WavError::Truncated)?;
+            fmt = Some((audio_format, channels, sample_rate, bits));
         }
         offset = body_end + (size % 2);
     }
 
-    let (audio_format, channels, sample_rate) = fmt.ok_or(WavError::MissingFmtChunk)?;
+    let (audio_format, channels, sample_rate, bits_per_sample) =
+        fmt.ok_or(WavError::MissingFmtChunk)?;
     if audio_format != 1 && audio_format != 0xfffe {
         return Err(WavError::UnsupportedAudioFormat);
     }
@@ -76,7 +80,7 @@ pub fn validate(bytes: &[u8]) -> Result<WavInfo, WavError> {
     if sample_rate == 0 {
         return Err(WavError::ZeroSampleRate);
     }
-    let data_size = data_size.ok_or(WavError::MissingDataChunk)?;
+    let (data_size, data_offset) = data.ok_or(WavError::MissingDataChunk)?;
     if data_size == 0 {
         return Err(WavError::ZeroDataSize);
     }
@@ -85,7 +89,9 @@ pub fn validate(bytes: &[u8]) -> Result<WavInfo, WavError> {
         audio_format,
         channels,
         sample_rate,
+        bits_per_sample,
         data_size,
+        data_offset,
     })
 }
 
@@ -114,32 +120,12 @@ impl Signal {
     }
 }
 
-fn bits_and_data(bytes: &[u8]) -> Option<(u16, &[u8])> {
-    let mut bits = None;
-    let mut offset = 12;
-    while offset + 8 <= bytes.len() {
-        let id = &bytes[offset..offset + 4];
-        let size = read_u32(bytes, offset + 4)? as usize;
-        let body = offset + 8;
-        if id == b"data" {
-            let available = bytes.len() - body;
-            return Some((bits?, &bytes[body..body + size.min(available)]));
-        }
-        if id == b"fmt " && size >= 16 {
-            bits = read_u16(bytes, body + 14);
-        }
-        offset = body + size + (size % 2);
-    }
-    None
-}
-
 pub fn measure(bytes: &[u8]) -> Result<Signal, SignalError> {
     let info = validate(bytes).map_err(SignalError::Wav)?;
-    let (bits, data) =
-        bits_and_data(bytes).ok_or(SignalError::Wav(WavError::MissingDataChunk))?;
-    if bits != 16 {
+    if info.bits_per_sample != 16 {
         return Err(SignalError::NotS16);
     }
+    let data = &bytes[info.data_offset..info.data_offset + info.data_size as usize];
     if data.len() % 2 != 0 {
         return Err(SignalError::OddSampleData);
     }
@@ -147,9 +133,6 @@ pub fn measure(bytes: &[u8]) -> Result<Signal, SignalError> {
         .chunks_exact(2)
         .map(|c| i16::from_le_bytes([c[0], c[1]]))
         .collect();
-    if samples.is_empty() {
-        return Err(SignalError::Wav(WavError::ZeroDataSize));
-    }
     let peak = samples.iter().map(|s| s.saturating_abs()).max().unwrap_or(0);
     let sum: f64 = samples.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
     let rms = (sum / samples.len() as f64).sqrt();

@@ -643,3 +643,58 @@ fn synthesis_needs_no_network() {
     std::fs::remove_dir_all(&out_dir).ok();
     assert!(!m.is_silent(), "offline output silent");
 }
+
+#[test]
+fn documented_layout_is_sufficient_when_copied() {
+    let source = match std::env::var_os("XDG_DATA_HOME") {
+        Some(x) if !x.is_empty() => std::path::PathBuf::from(x).join("voz"),
+        _ => std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+            .join(".local")
+            .join("share")
+            .join("voz"),
+    };
+    if !source.join("piper/bin/piper").exists() {
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("voz-e2e-layout-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("piper")).expect("mkdir root");
+    for dir in ["bin", "lib64"] {
+        let status = Command::new("cp")
+            .arg("-r")
+            .arg(source.join("piper").join(dir))
+            .arg(root.join("piper"))
+            .status()
+            .expect("copy runtime");
+        assert!(status.success(), "copying {dir} failed");
+    }
+    std::fs::create_dir_all(root.join("piper/voices")).expect("mkdir voices");
+    for entry in std::fs::read_dir(source.join("piper/voices")).expect("read voices") {
+        let path = entry.expect("entry").path();
+        let name = path.file_name().expect("name").to_string_lossy().into_owned();
+        if name.starts_with("en_") {
+            std::os::unix::fs::symlink(&path, root.join("piper/voices").join(&name)).ok();
+        }
+    }
+    let out = root.join("layout.wav");
+    let status = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("layout probe")
+        .args(["--lang", "en"])
+        .arg("--out")
+        .arg(&out)
+        .env("VOZ_OUT_DIR", root.join("out"))
+        .env("VOZ_NEURAL_ROOT", &root)
+        .env("VOZ_BACKEND", "fallback")
+        .env_remove("VOZ_PIPER_BIN")
+        .stdout(Stdio::null())
+        .status()
+        .expect("run cli");
+    let measured = status
+        .success()
+        .then(|| std::fs::read(&out).ok())
+        .flatten()
+        .map(|b| measure(&b).expect("measure"));
+    std::fs::remove_dir_all(&root).ok();
+    let m = measured.expect("a root built from the documented layout must speak");
+    assert!(!m.is_silent(), "layout output silent");
+}

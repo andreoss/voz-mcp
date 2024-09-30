@@ -111,6 +111,10 @@ impl Pitch {
     pub fn value(self) -> u8 {
         self.0
     }
+
+    pub fn factor(self) -> f64 {
+        2f64.powf((f64::from(self.0) - 50.0) / 100.0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -423,5 +427,29 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
         assert!(err.to_string().contains("1"));
         assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    }
+
+    #[test]
+    fn pitch_factor_is_neutral_in_the_middle() {
+        assert!((Pitch::parse(50).expect("p").factor() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pitch_factor_rises_and_falls_around_neutral() {
+        let low = Pitch::parse(0).expect("p").factor();
+        let high = Pitch::parse(99).expect("p").factor();
+        assert!(low < 0.75, "{low}");
+        assert!(high > 1.3, "{high}");
+        assert!(low < 1.0 && 1.0 < high);
+    }
+
+    #[test]
+    fn pitch_factor_is_monotonic() {
+        let mut prev = 0.0;
+        for p in [0u32, 25, 50, 75, 99] {
+            let f = Pitch::parse(p).expect("p").factor();
+            assert!(f > prev, "not increasing at {p}");
+            prev = f;
+        }
     }
 }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{Language, SpeakRequest, Speech, Timeout, Tts, TtsError};
+use super::{Language, Pitch, SpeakRequest, Speech, Timeout, Tts, TtsError};
 use crate::backend::PiperPaths;
 
 pub struct Piper {
@@ -58,8 +58,31 @@ fn voice_for(voices: &Path, lang: Language) -> Option<PathBuf> {
     hits.into_iter().next()
 }
 
-fn length_scale(rate: Option<super::Rate>) -> Option<String> {
-    rate.map(|r| format!("{:.3}", 170.0 / f64::from(r.value())))
+fn length_scale(rate: Option<super::Rate>, pitch: Option<Pitch>) -> Option<String> {
+    if rate.is_none() && pitch.is_none() {
+        return None;
+    }
+    let base = rate.map_or(1.0, |r| 170.0 / f64::from(r.value()));
+    let shift = pitch.map_or(1.0, Pitch::factor);
+    Some(format!("{:.3}", base * shift))
+}
+
+pub fn resample(samples: &[i16], factor: f64) -> Vec<i16> {
+    if samples.is_empty() || (factor - 1.0).abs() < f64::EPSILON {
+        return samples.to_vec();
+    }
+    let last = samples.len() - 1;
+    let out_len = (samples.len() as f64 / factor).round() as usize;
+    (0..out_len)
+        .map(|i| {
+            let pos = i as f64 * factor;
+            let idx = pos.floor() as usize;
+            let frac = pos - idx as f64;
+            let a = f64::from(samples[idx.min(last)]);
+            let b = f64::from(samples[(idx + 1).min(last)]);
+            (a + (b - a) * frac).round() as i16
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +95,7 @@ pub enum RewrapError {
     EmptyData,
 }
 
-pub fn rewrap_f32(bytes: &[u8]) -> Result<Vec<u8>, RewrapError> {
+pub fn rewrap_f32(bytes: &[u8], pitch: Option<Pitch>) -> Result<Vec<u8>, RewrapError> {
     if bytes.len() < 12 {
         return Err(RewrapError::Truncated);
     }
@@ -122,11 +145,15 @@ pub fn rewrap_f32(bytes: &[u8]) -> Result<Vec<u8>, RewrapError> {
         return Err(RewrapError::UnsupportedFormat);
     }
     let data = data.ok_or(RewrapError::MissingDataChunk)?;
-    let samples: Vec<i16> = data
+    let decoded: Vec<i16> = data
         .chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .map(|f| (f.clamp(-1.0, 1.0) * 32767.0) as i16)
         .collect();
+    let samples = match pitch {
+        Some(p) => resample(&decoded, p.factor()),
+        None => decoded,
+    };
     if samples.is_empty() {
         return Err(RewrapError::EmptyData);
     }
@@ -173,7 +200,7 @@ impl Tts for Piper {
             .join(format!("speech-{n}-{:04}.wav", std::process::id() % 10000));
         let mut cmd = Command::new(&self.bin);
         cmd.arg("-m").arg(&voice).arg("-f").arg(&raw);
-        if let Some(scale) = length_scale(req.rate) {
+        if let Some(scale) = length_scale(req.rate, req.pitch) {
             cmd.args(["--length_scale", &scale]);
         }
         let output =
@@ -193,7 +220,7 @@ impl Tts for Piper {
             reason: format!("vits output missing: {e}"),
         })?;
         std::fs::remove_file(&raw).ok();
-        let rewrapped = rewrap_f32(&raw_bytes).map_err(|e| TtsError {
+        let rewrapped = rewrap_f32(&raw_bytes, req.pitch).map_err(|e| TtsError {
             reason: format!("vits output invalid: {e:?}"),
         })?;
         std::fs::write(&path, &rewrapped).map_err(|e| TtsError {
@@ -465,7 +492,7 @@ mod tests {
 
     #[test]
     fn rewrap_clamps_and_scales_samples() {
-        let out = rewrap_f32(&f32_wav(&[0.0, 1.0, -1.0, 2.0, -2.0])).expect("rewrap");
+        let out = rewrap_f32(&f32_wav(&[0.0, 1.0, -1.0, 2.0, -2.0]), None).expect("rewrap");
         let info = wav::validate(&out).expect("valid");
         assert_eq!(info.audio_format, 1);
         assert_eq!(info.channels, 1);
@@ -479,20 +506,20 @@ mod tests {
 
     #[test]
     fn rewrap_rejects_truncated_input() {
-        assert_eq!(rewrap_f32(b"RIFF"), Err(RewrapError::Truncated));
+        assert_eq!(rewrap_f32(b"RIFF", None), Err(RewrapError::Truncated));
         let mut wav = f32_wav(&[0.0]);
         wav[16] = 200;
-        assert_eq!(rewrap_f32(&wav), Err(RewrapError::Truncated));
+        assert_eq!(rewrap_f32(&wav, None), Err(RewrapError::Truncated));
     }
 
     #[test]
     fn rewrap_rejects_bad_magic() {
         assert_eq!(
-            rewrap_f32(b"RIFXaaaaWAVEbbbb"),
+            rewrap_f32(b"RIFXaaaaWAVEbbbb", None),
             Err(RewrapError::BadMagic)
         );
         assert_eq!(
-            rewrap_f32(b"RIFFaaaaWAVXbbbb"),
+            rewrap_f32(b"RIFFaaaaWAVXbbbb", None),
             Err(RewrapError::BadMagic)
         );
     }
@@ -506,7 +533,7 @@ mod tests {
         v.extend_from_slice(b"data");
         v.extend_from_slice(&4u32.to_le_bytes());
         v.extend_from_slice(&[0, 0, 0, 0]);
-        assert_eq!(rewrap_f32(&v), Err(RewrapError::MissingFmtChunk));
+        assert_eq!(rewrap_f32(&v, None), Err(RewrapError::MissingFmtChunk));
     }
 
     #[test]
@@ -518,26 +545,26 @@ mod tests {
         v.extend_from_slice(b"fmt ");
         v.extend_from_slice(&8u32.to_le_bytes());
         v.extend_from_slice(&[0; 8]);
-        assert_eq!(rewrap_f32(&v), Err(RewrapError::Truncated));
+        assert_eq!(rewrap_f32(&v, None), Err(RewrapError::Truncated));
     }
 
     #[test]
     fn rewrap_rejects_non_float_format() {
         let mut wav = f32_wav(&[0.0]);
         wav[20] = 1;
-        assert_eq!(rewrap_f32(&wav), Err(RewrapError::UnsupportedFormat));
+        assert_eq!(rewrap_f32(&wav, None), Err(RewrapError::UnsupportedFormat));
     }
 
     #[test]
     fn rewrap_rejects_missing_data_chunk() {
         let wav = f32_wav(&[]);
         let truncated = &wav[..36];
-        assert_eq!(rewrap_f32(truncated), Err(RewrapError::MissingDataChunk));
+        assert_eq!(rewrap_f32(truncated, None), Err(RewrapError::MissingDataChunk));
     }
 
     #[test]
     fn rewrap_rejects_empty_data() {
-        assert_eq!(rewrap_f32(&f32_wav(&[])), Err(RewrapError::EmptyData));
+        assert_eq!(rewrap_f32(&f32_wav(&[]), None), Err(RewrapError::EmptyData));
     }
 
     #[test]
@@ -585,5 +612,91 @@ mod tests {
         let tree = Tree::new("scannojson", &["en_US-a-medium"]).emitting_fixture();
         std::fs::remove_file(tree.voices().join("en_US-a-medium.onnx.json")).expect("rm");
         assert!(scan_piper(&tree.dir.join("nowhere"), Some(&tree.bin())).is_none());
+    }
+
+    fn sine(n: usize, cycles: f64) -> Vec<i16> {
+        (0..n)
+            .map(|i| {
+                let t = i as f64 / n as f64;
+                ((t * cycles * std::f64::consts::TAU).sin() * 10000.0) as i16
+            })
+            .collect()
+    }
+
+    fn zero_crossings(s: &[i16]) -> usize {
+        s.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count()
+    }
+
+    #[test]
+    fn resample_at_unit_factor_returns_the_same_samples() {
+        let input = sine(1000, 50.0);
+        assert_eq!(resample(&input, 1.0), input);
+    }
+
+    #[test]
+    fn resample_above_one_shortens_and_raises_pitch() {
+        let input = sine(8000, 100.0);
+        let out = resample(&input, 2.0);
+        assert!(
+            (out.len() as f64 - 4000.0).abs() < 4.0,
+            "len {}",
+            out.len()
+        );
+        let before = zero_crossings(&input);
+        let after = zero_crossings(&out);
+        assert!(
+            (after as f64 - before as f64).abs() < before as f64 * 0.05,
+            "cycles must survive: {before} -> {after}"
+        );
+    }
+
+    #[test]
+    fn resample_below_one_lengthens_and_lowers_pitch() {
+        let input = sine(4000, 50.0);
+        let out = resample(&input, 0.5);
+        assert!((out.len() as f64 - 8000.0).abs() < 4.0, "len {}", out.len());
+        let before = zero_crossings(&input);
+        let after = zero_crossings(&out);
+        assert!(
+            (after as f64 - before as f64).abs() < before as f64 * 0.05,
+            "cycles must survive: {before} -> {after}"
+        );
+    }
+
+    #[test]
+    fn resample_of_empty_input_is_empty() {
+        assert!(resample(&[], 1.5).is_empty());
+    }
+
+    #[test]
+    fn length_scale_compensates_pitch_so_duration_holds() {
+        let pitch = Pitch::parse(99).expect("p");
+        let f = pitch.factor();
+        let only_pitch = length_scale(None, Some(pitch)).expect("scale");
+        assert_eq!(only_pitch, format!("{f:.3}"));
+        let with_rate = length_scale(super::super::Rate::parse(340).ok(), Some(pitch))
+            .expect("scale");
+        assert_eq!(with_rate, format!("{:.3}", 0.5 * f));
+    }
+
+    #[test]
+    fn length_scale_is_absent_without_rate_or_pitch() {
+        assert!(length_scale(None, None).is_none());
+    }
+
+    #[test]
+    fn rewrap_applies_pitch_when_given() {
+        let plain = rewrap_f32(&f32_wav(&[0.0; 800]), None).expect("rewrap");
+        let shifted = rewrap_f32(
+            &f32_wav(&[0.0; 800]),
+            Some(Pitch::parse(99).expect("pitch")),
+        )
+        .expect("rewrap");
+        assert!(
+            shifted.len() < plain.len(),
+            "raising pitch shortens the payload: {} vs {}",
+            shifted.len(),
+            plain.len()
+        );
     }
 }

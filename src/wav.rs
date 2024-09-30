@@ -102,6 +102,7 @@ pub struct Signal {
     pub seconds: f64,
     pub peak: i16,
     pub rms: f64,
+    pub zcr: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,11 +139,18 @@ pub fn measure(bytes: &[u8]) -> Result<Signal, SignalError> {
     let rms = (sum / samples.len() as f64).sqrt();
     let frames = samples.len() as u64 / u64::from(info.channels);
     let seconds = frames as f64 / f64::from(info.sample_rate);
+    let crossings = samples.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
+    let zcr = if seconds > 0.0 {
+        crossings as f64 / seconds
+    } else {
+        0.0
+    };
     Ok(Signal {
         frames,
         seconds,
         peak,
         rms,
+        zcr,
     })
 }
 
@@ -369,5 +377,44 @@ mod tests {
         let mut bytes = s16(&tone(64, 1000));
         bytes.pop();
         assert!(measure(&bytes).is_err());
+    }
+
+    #[test]
+    fn zero_crossing_rate_tracks_frequency() {
+        let slow = measure(&s16(&tone(22050, 4000))).expect("m");
+        let fast_bytes = s16(&(0..22050)
+            .map(|i| if i % 2 == 0 { 4000 } else { -4000 })
+            .collect::<Vec<i16>>());
+        let fast = measure(&fast_bytes).expect("m");
+        assert!(slow.zcr > 0.0);
+        assert!((fast.zcr - slow.zcr).abs() < 1.0, "{} {}", fast.zcr, slow.zcr);
+        let half = measure(&s16(&(0..22050)
+            .map(|i| if (i / 2) % 2 == 0 { 4000 } else { -4000 })
+            .collect::<Vec<i16>>()))
+            .expect("m");
+        assert!(half.zcr < slow.zcr * 0.6, "{} vs {}", half.zcr, slow.zcr);
+    }
+
+    #[test]
+    fn zero_crossing_rate_is_zero_when_there_is_no_whole_frame() {
+        let mut v = Vec::new();
+        v.extend_from_slice(b"RIFF");
+        v.extend_from_slice(&38u32.to_le_bytes());
+        v.extend_from_slice(b"WAVE");
+        v.extend_from_slice(b"fmt ");
+        v.extend_from_slice(&16u32.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&2u16.to_le_bytes());
+        v.extend_from_slice(&22050u32.to_le_bytes());
+        v.extend_from_slice(&88200u32.to_le_bytes());
+        v.extend_from_slice(&4u16.to_le_bytes());
+        v.extend_from_slice(&16u16.to_le_bytes());
+        v.extend_from_slice(b"data");
+        v.extend_from_slice(&2u32.to_le_bytes());
+        v.extend_from_slice(&1234i16.to_le_bytes());
+        let m = measure(&v).expect("measured");
+        assert_eq!(m.frames, 0);
+        assert_eq!(m.seconds, 0.0);
+        assert_eq!(m.zcr, 0.0);
     }
 }

@@ -9,7 +9,10 @@ fn main() {
             );
             std::process::exit(1);
         }
-        Ok(m) => println!("ok {:.3}s peak {} rms {:.1}", m.seconds, m.peak, m.rms),
+        Ok(m) => println!(
+            "ok {:.3}s peak {} rms {:.1} zcr {:.0}",
+            m.seconds, m.peak, m.rms, m.zcr
+        ),
         Err(e) => {
             println!("fail: {e:?}");
             std::process::exit(1);

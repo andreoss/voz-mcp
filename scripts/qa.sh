@@ -74,8 +74,11 @@ LIST_LINE="$(recv)"
 send '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke","lang":"en"}}}'
 CALL_LINE="$(recv)"
 
-send '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke rate pitch","lang":"en","rate":150,"pitch":60}}}'
-RATE_PITCH_LINE="$(recv)"
+send '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke rate","lang":"en","rate":150}}}'
+RATE_PITCH_LINE="100 1 6 26 100 131 174 994recv)"
+
+send '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke pitch","lang":"en","pitch":60}}}'
+NEURAL_PITCH_LINE="100 1 6 26 100 131 174 994recv)"
 
 send '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke lang","lang":"zz"}}}'
 BAD_LANG_LINE="$(recv)"
@@ -115,7 +118,11 @@ RATE_PITCH_HEADER="$(head -c 4 "$RATE_PITCH_PATH")"
 RATE_PITCH_SIZE="$(wc -c < "$RATE_PITCH_PATH")"
 [ "$RATE_PITCH_SIZE" -gt 1000 ]
 
-echo "rate+pitch ok: $RATE_PITCH_PATH ($RATE_PITCH_SIZE bytes)"
+echo "rate ok:  ( bytes)"
+
+echo "" | grep -F -q "pitch is not supported by the neural backend"
+
+echo "neural pitch refusal ok"
 
 "$PWD/target/debug/examples/wav_check" "$RATE_PITCH_PATH" >/dev/null
 
@@ -211,3 +218,19 @@ set -e
 echo "$BAD_TIMEOUT_ERR" | grep -F -q "1..86400"
 
 echo "timeout override validation ok"
+
+if [ -x "$FALLBACK_BIN" ]; then
+  PITCH_TEXT="the quick brown fox jumps over the lazy dog"
+  for P in 10 90; do
+    VOZ_BACKEND=fallback VOZ_PIPER_BIN="$FALLBACK_BIN" VOZ_OUT_DIR="$SMOKE_DIR" \
+      timeout 600 "$BIN" "$PITCH_TEXT" --lang en --pitch "$P" --out "$SMOKE_DIR/pitch-$P.wav"
+    "$PWD/target/debug/examples/wav_check" "$SMOKE_DIR/pitch-$P.wav" >/dev/null
+  done
+
+  ZCR_LOW="$("$PWD/target/debug/examples/wav_check" "$SMOKE_DIR/pitch-10.wav" | awk '{print $8}')"
+  ZCR_HIGH="$("$PWD/target/debug/examples/wav_check" "$SMOKE_DIR/pitch-90.wav" | awk '{print $8}')"
+
+  [ "$ZCR_HIGH" -gt "$ZCR_LOW" ]
+
+  echo "fallback pitch ok: zcr $ZCR_LOW -> $ZCR_HIGH"
+fi

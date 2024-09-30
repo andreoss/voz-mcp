@@ -53,6 +53,11 @@ fn lang_flag(lang: Language) -> &'static str {
 
 impl Tts for Qwen {
     fn speak(&self, req: &SpeakRequest) -> Result<Speech, TtsError> {
+        if req.pitch.is_some() {
+            return Err(TtsError {
+                reason: "pitch is not supported by the neural backend".to_string(),
+            });
+        }
         let text = req.text.trim();
         if text.is_empty() {
             return Err(TtsError {
@@ -385,5 +390,26 @@ mod tests {
         let hit = scan_modelz(&root, Some(&elsewhere));
         std::fs::remove_dir_all(&root).ok();
         assert!(hit.is_none());
+    }
+
+    #[test]
+    fn pitch_is_refused_rather_than_dropped() {
+        let stub = Stub::new("pitchrej", "#!/bin/sh\ncat > /dev/null\nexit 0\n");
+        let out = stub.dir.join("out");
+        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
+        let mut req = request("hello", Language::English);
+        req.pitch = Some(crate::tts::Pitch::parse(70).expect("pitch"));
+        let err = tts.speak(&req).unwrap_err();
+        assert!(err.reason.contains("pitch"), "{}", err.reason);
+        assert!(err.reason.contains("neural"), "{}", err.reason);
+    }
+
+    #[test]
+    fn absent_pitch_still_synthesizes() {
+        let stub = Stub::new("pitchnone", "#!/bin/sh\ncat > /dev/null\nexit 0\n");
+        let out = stub.dir.join("out");
+        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
+        let err = tts.speak(&request("hello", Language::English)).unwrap_err();
+        assert!(!err.reason.contains("pitch"), "{}", err.reason);
     }
 }

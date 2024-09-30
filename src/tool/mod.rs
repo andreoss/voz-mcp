@@ -141,7 +141,7 @@ impl Server {
     }
 }
 
-#[tool_handler(name = "voz-mcp", version = "0.1.0")]
+#[tool_handler(name = "voz-mcp", version = "1.0.0")]
 impl ServerHandler for Server {}
 
 #[cfg(test)]
@@ -392,5 +392,18 @@ mod tests {
             1,
             "synthesis must not run concurrently"
         );
+    }
+
+    #[test]
+    fn advertised_version_matches_the_package() {
+        use rmcp::ServerHandler;
+        let s = server(StubTts, StubReadback(Vec::new()));
+        let info = s.get_info();
+        assert_eq!(
+            info.server_info.version,
+            env!("CARGO_PKG_VERSION"),
+            "the version in the tool_handler attribute must track Cargo.toml"
+        );
+        assert_eq!(info.server_info.name, "voz-mcp");
     }
 }

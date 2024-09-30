@@ -241,3 +241,16 @@ if [ -x "$FALLBACK_BIN" ]; then
 
   echo "fallback rate ok: ${DUR_SLOW}s at 85 vs ${DUR_FAST}s at 340"
 fi
+
+if command -v unshare >/dev/null 2>&1 && unshare -rn true >/dev/null 2>&1; then
+  OFFLINE_OUT="$SMOKE_DIR/offline.wav"
+
+  VOZ_BACKEND=fallback VOZ_PIPER_BIN="$FALLBACK_BIN" VOZ_OUT_DIR="$SMOKE_DIR" \
+    unshare -rn timeout 600 "$BIN" "offline probe" --lang en --out "$OFFLINE_OUT"
+
+  "$PWD/target/debug/examples/wav_check" "$OFFLINE_OUT" >/dev/null
+
+  echo "offline ok: speech produced with no network namespace"
+else
+  echo "offline stage skipped: network namespaces unavailable"
+fi

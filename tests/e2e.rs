@@ -613,3 +613,33 @@ fn neural_backend_refuses_rate() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("rate is not supported"), "{stderr}");
 }
+
+#[test]
+fn synthesis_needs_no_network() {
+    let usable = Command::new("unshare")
+        .args(["-rn", "true"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !usable {
+        return;
+    }
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-offline-{}", std::process::id()));
+    std::fs::create_dir_all(&out_dir).expect("mkdir out");
+    let out = out_dir.join("offline.wav");
+    let status = Command::new("unshare")
+        .args(["-rn", env!("CARGO_BIN_EXE_voz")])
+        .arg("offline probe")
+        .args(["--lang", "en"])
+        .arg("--out")
+        .arg(&out)
+        .env("VOZ_OUT_DIR", &out_dir)
+        .env("VOZ_BACKEND", "fallback")
+        .stdout(Stdio::null())
+        .status()
+        .expect("run cli in a network namespace");
+    assert!(status.success(), "synthesis must not need the network");
+    let m = measure(&std::fs::read(&out).expect("read")).expect("measure");
+    std::fs::remove_dir_all(&out_dir).ok();
+    assert!(!m.is_silent(), "offline output silent");
+}

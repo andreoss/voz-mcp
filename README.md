@@ -14,8 +14,11 @@ host; no cloud round-trips.
 - 10 languages: `ru en es de fr it pt zh ja ko` (ISO 639-1). The neural backend
   covers all 10. The fallback backend covers 9: there is no usable `ja` voice, so
   `ja` returns a per-language error while the fallback backend is active.
-- `speak` parameters `rate` (50..500) and `pitch` (0..99). Rate is honored by the
-  fallback backend only; the neural backend accepts and drops both.
+- `rate` (50..500) and `pitch` (0..99). The fallback backend honours both:
+  rate maps to phoneme length, pitch shifts the signal with a length
+  compensation that holds duration to within about ten percent. The neural
+  backend has no length control, so it accepts and drops `rate` and refuses
+  `pitch` outright rather than silently ignoring it.
 
 ## Requirements
 
@@ -45,7 +48,8 @@ voz "привет мир" --lang ru --rate 170 --pitch 60 --out hi_ru.wav
 ```
 
 - `--lang` one of `ru en es de fr it pt zh ja ko` (default `en`).
-- `--rate` 50..500, `--pitch` 0..99; both optional.
+- `--rate` 50..500, `--pitch` 0..99; both optional. `--pitch` needs the
+  fallback backend; the neural backend rejects it (exit 1).
 - `--out` destination path; omit it and the file stays under `VOZ_OUT_DIR` and
   its path is printed.
 - Exactly one positional text argument.

@@ -562,3 +562,54 @@ fn neural_backend_refuses_pitch() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("pitch is not supported"), "{stderr}");
 }
+
+#[test]
+fn rate_changes_duration_on_the_fallback_backend() {
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-rate-dur-{}", std::process::id()));
+    std::fs::create_dir_all(&out_dir).expect("mkdir out");
+    let text = "the quick brown fox jumps over the lazy dog";
+    let mut seen = Vec::new();
+    for rate in ["85", "340"] {
+        let out = out_dir.join(format!("r{rate}.wav"));
+        let status = Command::new(env!("CARGO_BIN_EXE_voz"))
+            .arg(text)
+            .args(["--lang", "en", "--rate", rate])
+            .arg("--out")
+            .arg(&out)
+            .env("VOZ_OUT_DIR", &out_dir)
+            .env("VOZ_BACKEND", "fallback")
+            .stdout(Stdio::null())
+            .status()
+            .expect("run cli");
+        assert!(status.success(), "cli failed for rate {rate}");
+        let m = measure(&std::fs::read(&out).expect("read")).expect("measure");
+        assert!(!m.is_silent(), "rate {rate} silent");
+        seen.push(m);
+    }
+    std::fs::remove_dir_all(&out_dir).ok();
+    let slow = seen[0];
+    let fast = seen[1];
+    assert!(
+        slow.seconds > fast.seconds * 1.5,
+        "a lower rate must speak for longer: {} vs {}",
+        slow.seconds,
+        fast.seconds
+    );
+}
+
+#[test]
+fn neural_backend_refuses_rate() {
+    let out_dir = std::env::temp_dir().join(format!("voz-e2e-nrate-{}", std::process::id()));
+    std::fs::create_dir_all(&out_dir).expect("mkdir out");
+    let output = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("probe")
+        .args(["--lang", "en", "--rate", "150"])
+        .env("VOZ_OUT_DIR", &out_dir)
+        .env("VOZ_BACKEND", "neural")
+        .output()
+        .expect("run cli");
+    std::fs::remove_dir_all(&out_dir).ok();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("rate is not supported"), "{stderr}");
+}

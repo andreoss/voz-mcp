@@ -53,6 +53,11 @@ fn lang_flag(lang: Language) -> &'static str {
 
 impl Tts for Qwen {
     fn speak(&self, req: &SpeakRequest) -> Result<Speech, TtsError> {
+        if req.rate.is_some() {
+            return Err(TtsError {
+                reason: "rate is not supported by the neural backend".to_string(),
+            });
+        }
         if req.pitch.is_some() {
             return Err(TtsError {
                 reason: "pitch is not supported by the neural backend".to_string(),
@@ -411,5 +416,17 @@ mod tests {
         let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
         let err = tts.speak(&request("hello", Language::English)).unwrap_err();
         assert!(!err.reason.contains("pitch"), "{}", err.reason);
+    }
+
+    #[test]
+    fn rate_is_refused_rather_than_dropped() {
+        let stub = Stub::new("raterej", "#!/bin/sh\ncat > /dev/null\nexit 0\n");
+        let out = stub.dir.join("out");
+        let tts = Qwen::new(&stub.script, "/t.gguf", "/c.gguf", &out, Timeout::default_timeout());
+        let mut req = request("hello", Language::English);
+        req.rate = Some(crate::tts::Rate::parse(150).expect("rate"));
+        let err = tts.speak(&req).unwrap_err();
+        assert!(err.reason.contains("rate"), "{}", err.reason);
+        assert!(err.reason.contains("neural"), "{}", err.reason);
     }
 }

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export LC_ALL=C
+
 if ! command -v cargo >/dev/null 2>&1; then
 	GCC="$(find /nix/store -maxdepth 1 -type d -name '*gcc-wrapper*' ! -name '*.drv' | head -n1)"
 	RUST="$(find /nix/store -maxdepth 1 -type d -name '*rustup*' ! -name '*.drv' | head -n1)"
@@ -75,10 +77,10 @@ send '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"speak","ar
 CALL_LINE="$(recv)"
 
 send '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke rate","lang":"en","rate":150}}}'
-RATE_PITCH_LINE="100 1 6 26 100 131 174 994recv)"
+NEURAL_RATE_LINE="$(recv)"
 
 send '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke pitch","lang":"en","pitch":60}}}'
-NEURAL_PITCH_LINE="100 1 6 26 100 131 174 994recv)"
+NEURAL_PITCH_LINE="$(recv)"
 
 send '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"speak","arguments":{"text":"smoke lang","lang":"zz"}}}'
 BAD_LANG_LINE="$(recv)"
@@ -105,28 +107,17 @@ echo "$LIST_LINE" | grep -q '"name":"readback"'
 
 echo "tools/list ok: speak, readback"
 
-echo "$RATE_PITCH_LINE" | grep -q '"isError":false'
+echo "$NEURAL_RATE_LINE" | grep -F -q "rate is not supported by the neural backend"
+echo "$NEURAL_PITCH_LINE" | grep -F -q "pitch is not supported by the neural backend"
 
-RATE_PITCH_PATH="$(echo "$RATE_PITCH_LINE" | grep -o '"path":"[^"]*"' | head -n1 | cut -d'"' -f4)"
+echo "neural rate and pitch refusal ok"
 
-[ -n "$RATE_PITCH_PATH" ]
-[ -f "$RATE_PITCH_PATH" ]
+SPEECH_SIZE="$(wc -c < "$SPEECH_PATH")"
+[ "$SPEECH_SIZE" -gt 1000 ]
 
-RATE_PITCH_HEADER="$(head -c 4 "$RATE_PITCH_PATH")"
-[ "$RATE_PITCH_HEADER" = "RIFF" ]
+"$PWD/target/debug/examples/wav_check" "$SPEECH_PATH" >/dev/null
 
-RATE_PITCH_SIZE="$(wc -c < "$RATE_PITCH_PATH")"
-[ "$RATE_PITCH_SIZE" -gt 1000 ]
-
-echo "rate ok:  ( bytes)"
-
-echo "" | grep -F -q "pitch is not supported by the neural backend"
-
-echo "neural pitch refusal ok"
-
-"$PWD/target/debug/examples/wav_check" "$RATE_PITCH_PATH" >/dev/null
-
-echo "wav depth ok: $RATE_PITCH_PATH"
+echo "wav depth ok: $SPEECH_PATH ($SPEECH_SIZE bytes)"
 
 echo "$BAD_LANG_LINE" | grep -q '"code":-32602'
 echo "$BAD_LANG_LINE" | grep -F -q 'expected ru|en|es|de|fr|it|pt|zh|ja|ko'
@@ -134,13 +125,13 @@ echo "$BAD_LANG_LINE" | grep -F -q 'expected ru|en|es|de|fr|it|pt|zh|ja|ko'
 echo "-32602 ok: unsupported language rejected"
 
 echo "$READBACK_LINE" | grep -q '"isError":false'
-echo "$READBACK_LINE" | grep -F -q "$RATE_PITCH_PATH"
+echo "$READBACK_LINE" | grep -F -q "$SPEECH_PATH"
 
-echo "readback ok: $RATE_PITCH_PATH listed"
+echo "readback ok: $SPEECH_PATH listed"
 
 CLI_OUT="$SMOKE_DIR/cli-smoke.wav"
 
-timeout 600 "$PWD/target/debug/voz" "cli smoke" --lang en --rate 150 --pitch 60 --out "$CLI_OUT"
+timeout 600 "$PWD/target/debug/voz" "cli smoke" --lang en --out "$CLI_OUT"
 
 [ -f "$CLI_OUT" ]
 
@@ -233,4 +224,20 @@ if [ -x "$FALLBACK_BIN" ]; then
   [ "$ZCR_HIGH" -gt "$ZCR_LOW" ]
 
   echo "fallback pitch ok: zcr $ZCR_LOW -> $ZCR_HIGH"
+fi
+
+if [ -x "$FALLBACK_BIN" ]; then
+  RATE_TEXT="the quick brown fox jumps over the lazy dog"
+  for R in 85 340; do
+    VOZ_BACKEND=fallback VOZ_PIPER_BIN="$FALLBACK_BIN" VOZ_OUT_DIR="$SMOKE_DIR" \
+      timeout 600 "$BIN" "$RATE_TEXT" --lang en --rate "$R" --out "$SMOKE_DIR/rate-$R.wav"
+    "$PWD/target/debug/examples/wav_check" "$SMOKE_DIR/rate-$R.wav" >/dev/null
+  done
+
+  DUR_SLOW="$("$PWD/target/debug/examples/wav_check" "$SMOKE_DIR/rate-85.wav" | awk '{print $2}' | tr -d 's')"
+  DUR_FAST="$("$PWD/target/debug/examples/wav_check" "$SMOKE_DIR/rate-340.wav" | awk '{print $2}' | tr -d 's')"
+
+  awk -v s="$DUR_SLOW" -v f="$DUR_FAST" 'BEGIN { exit !(s > f * 1.5) }'
+
+  echo "fallback rate ok: ${DUR_SLOW}s at 85 vs ${DUR_FAST}s at 340"
 fi

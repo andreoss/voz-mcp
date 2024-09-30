@@ -24,13 +24,23 @@ host; no cloud round-trips.
 
 - Rust toolchain (edition 2024).
 - At least one backend provisioned under the data root, by default
-  `/voz` (else `~/.local/share/voz`, else
+  `$XDG_DATA_HOME/voz` (else `~/.local/share/voz`, else
   `/usr/local/share/voz`):
   - Neural: `qwentts/build/qwen-tts` plus a talker and a tokenizer `.gguf` under
     `gguf/`.
-  - Fallback: `piper/bin/piper` plus voices in the sibling `piper/voices/`
-    (`<lang>_*.onnx` with a matching `.onnx.json`).
+  - Fallback: the whole `piper/` directory — `bin/piper` with `bin/espeak-ng-data/`
+    beside it, `lib64/`, and voices in `piper/voices/` (`<lang>_*.onnx` with a
+    matching `.onnx.json`). The engine resolves its libraries through an rpath of
+    `$ORIGIN/../lib64`, so copying only `bin/piper` and the voices fails with
+    `error while loading shared libraries: libpiper.so`.
+
 - Linux x86-64; both runtimes are CPU-only.
+
+An existing tree elsewhere can be adopted by linking it at the data root:
+
+```sh
+ln -s /path/to/tree "${XDG_DATA_HOME:-$HOME/.local/share}/voz"
+```
 
 ## Build
 
@@ -91,7 +101,7 @@ Restart the client after editing its config; configs load once at startup.
 |----------|---------|---------|
 | `VOZ_OUT_DIR` | `./audio` | Output directory for synthesized speech |
 | `VOZ_BACKEND` | `auto` | Backend selection (see below) |
-| `VOZ_NEURAL_ROOT` | `/voz` | Data root override; ignored if the path does not exist |
+| `VOZ_NEURAL_ROOT` | `$XDG_DATA_HOME/voz` | Data root override; ignored if the path does not exist |
 | `VOZ_NEURAL_BIN` | auto-discovered | Neural engine executable; weights are still resolved under the modelz root |
 | `VOZ_PIPER_BIN` | auto-discovered | Fallback engine executable; voices are read from `../voices` next to it |
 | `VOZ_TIMEOUT_SECS` | `600` | Synthesis budget in whole seconds, `1..86400` |
@@ -122,18 +132,12 @@ VOZ_BACKEND=fallback voz "hello" --lang en --out hi.wav
 bash scripts/qa.sh
 ```
 
-Runs the whole gate: build, tests, clippy, a coverage floor, and live smokes
-against the real stack. `SKIP_SMOKE=1` stops before the smoke stages. The
-stage list is not repeated here; `doc/Pilot.adoc` and `doc/COVERAGE.adoc`
-own it.
-
-Provisioning a host: `doc/Provisioning.adoc`. User stories and what proves
-them: `doc/Stories.adoc`.
-
-See `doc/` for process, backlog and the coverage record, and
-`doc/adr/INDEX.adoc` for which design decisions currently hold.
+Runs the whole gate: build, unit tests, serialized e2e, clippy, a coverage
+floor, and live smokes against the real stack — neural stdio, CLI, forced
+fallback, bounded synthesis, rate and pitch, and an offline run in a network
+namespace. `SKIP_SMOKE=1` stops before the smoke stages.
 
 ## License
 
-GPL-3.0-only; see `LICENSE`. The speech engines run as separate processes
-and none of their code is linked in (`doc/adr/ADR-0009.adoc`).
+GPL-3.0-only; see `LICENSE`. The speech engines run as separate processes and
+none of their code is linked in, so their own terms do not reach this binary.

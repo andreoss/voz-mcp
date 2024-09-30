@@ -186,6 +186,7 @@ fn server_speaks_with_rate_and_rejects_out_of_range_rate() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-rate-{}", std::process::id()));
     let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
         .env("VOZ_OUT_DIR", &out_dir)
+        .env("VOZ_BACKEND", "fallback")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -236,6 +237,7 @@ fn server_speaks_with_pitch_and_rejects_out_of_range_pitch() {
     let out_dir = std::env::temp_dir().join(format!("voz-e2e-pitch-{}", std::process::id()));
     let mut child = Command::new(env!("CARGO_BIN_EXE_voz")).arg("mcp")
         .env("VOZ_OUT_DIR", &out_dir)
+        .env("VOZ_BACKEND", "fallback")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

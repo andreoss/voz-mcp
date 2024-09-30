@@ -10,11 +10,16 @@ use crate::tts::{Language, Pitch, Rate, SpeakRequest, Tts};
 pub struct Server {
     backend: Box<dyn Tts>,
     readback: Box<dyn Readback>,
+    synthesis: std::sync::Mutex<()>,
 }
 
 impl Server {
     pub fn new(backend: Box<dyn Tts>, readback: Box<dyn Readback>) -> Self {
-        Self { backend, readback }
+        Self {
+            backend,
+            readback,
+            synthesis: std::sync::Mutex::new(()),
+        }
     }
 }
 
@@ -91,6 +96,10 @@ impl Server {
                     None,
                 )
             })?;
+        let _one_at_a_time = self
+            .synthesis
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let speech = self
             .backend
             .speak(&SpeakRequest {
@@ -323,5 +332,65 @@ mod tests {
             Ok(_) => panic!("expected error"),
         };
         assert!(err.message.contains("failed to list recordings"));
+    }
+
+    struct ConcurrencyProbe {
+        live: std::sync::atomic::AtomicUsize,
+        peak: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Tts for ConcurrencyProbe {
+        fn speak(&self, _req: &SpeakRequest) -> Result<Speech, TtsError> {
+            use std::sync::atomic::Ordering;
+            let now = self.live.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            self.live.fetch_sub(1, Ordering::SeqCst);
+            Ok(Speech {
+                path: PathBuf::from("/dev/null"),
+            })
+        }
+    }
+
+    #[test]
+    fn concurrent_speak_calls_run_one_at_a_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let probe = std::sync::Arc::new(ConcurrencyProbe {
+            live: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+        });
+        struct Shared(std::sync::Arc<ConcurrencyProbe>);
+        impl Tts for Shared {
+            fn speak(&self, req: &SpeakRequest) -> Result<Speech, TtsError> {
+                self.0.speak(req)
+            }
+        }
+        let server = std::sync::Arc::new(Server::new(
+            Box::new(Shared(probe.clone())),
+            Box::new(StubReadback(Vec::new())),
+        ));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let server = server.clone();
+                std::thread::spawn(move || {
+                    server
+                        .speak(Parameters(SpeakInput {
+                            text: "hi".to_string(),
+                            lang: "en".to_string(),
+                            rate: None,
+                            pitch: None,
+                        }))
+                        .map(|_| ())
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread").expect("speak");
+        }
+        assert_eq!(
+            probe.peak.load(Ordering::SeqCst),
+            1,
+            "synthesis must not run concurrently"
+        );
     }
 }

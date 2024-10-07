@@ -71,6 +71,10 @@ impl BackendChoice {
 pub enum SelectionError {
     UnknownChoice(String),
     Unavailable(BackendChoice),
+    UnavailableAt {
+        choice: BackendChoice,
+        searched: String,
+    },
     BadTimeout(String),
 }
 
@@ -80,6 +84,7 @@ impl SelectionError {
             SelectionError::UnknownChoice(_) => 2,
             SelectionError::BadTimeout(_) => 2,
             SelectionError::Unavailable(_) => 1,
+            SelectionError::UnavailableAt { .. } => 1,
         }
     }
 }
@@ -93,6 +98,12 @@ impl fmt::Display for SelectionError {
             SelectionError::Unavailable(choice) => {
                 write!(f, "{} backend not available", choice.code())
             }
+            SelectionError::UnavailableAt { choice, searched } => write!(
+                f,
+                "{} backend not available; searched {}",
+                choice.code(),
+                searched
+            ),
             SelectionError::BadTimeout(value) => write!(
                 f,
                 "unsupported timeout {value}, expected whole seconds {}..{}",
@@ -178,6 +189,10 @@ pub fn read_piper_bin_override() -> Option<PathBuf> {
 
 pub fn read_neural_bin_override() -> Option<PathBuf> {
     std::env::var_os("VOZ_NEURAL_BIN").map(PathBuf::from)
+}
+
+pub fn read_piper_voices_override() -> Option<PathBuf> {
+    std::env::var_os("VOZ_PIPER_VOICES").map(PathBuf::from)
 }
 
 pub fn default_root(xdg_data_home: Option<&OsStr>, home: Option<&OsStr>) -> PathBuf {

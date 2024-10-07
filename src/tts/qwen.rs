@@ -106,11 +106,16 @@ impl Tts for Qwen {
     }
 }
 
-pub fn scan_modelz(root: &Path, bin_override: Option<&Path>) -> Option<NeuralPaths> {
+pub fn neural_search(root: &Path, bin_override: Option<&Path>) -> (PathBuf, PathBuf) {
     let bin = match bin_override {
         Some(p) if p.exists() => p.to_path_buf(),
         _ => root.join("qwentts").join("build").join("qwen-tts"),
     };
+    (bin, root.join("gguf"))
+}
+
+pub fn scan_modelz(root: &Path, bin_override: Option<&Path>) -> Option<NeuralPaths> {
+    let (bin, _) = neural_search(root, bin_override);
     if !bin.exists() {
         return None;
     }

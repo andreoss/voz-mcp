@@ -1,4 +1,6 @@
 pub mod backend;
+pub mod config;
+pub mod voices;
 pub mod tts;
 pub mod tool;
 pub mod readback;

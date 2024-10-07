@@ -700,3 +700,63 @@ fn documented_layout_is_sufficient_when_copied() {
     let m = measured.expect("a root built from the documented layout must speak");
     assert!(!m.is_silent(), "layout output silent");
 }
+
+#[test]
+fn voices_fetch_installs_a_catalogued_voice_into_a_fresh_root() {
+    let root = std::env::temp_dir().join(format!("voz-e2e-fetch-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("mkdir root");
+    let output = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .args(["voices", "fetch", "--lang", "es"])
+        .env("VOZ_NEURAL_ROOT", &root)
+        .output()
+        .expect("run cli");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        std::fs::remove_dir_all(&root).ok();
+        if stderr.contains("download failed") {
+            eprintln!("notice: voices fetch skipped, network unavailable");
+            return;
+        }
+        panic!("voices fetch failed: {stderr}");
+    }
+    let voices = root.join("piper").join("voices");
+    let bytes = std::fs::read(voices.join("es_ES-davefx-medium.onnx")).expect("onnx");
+    let catalog = voz_mcp::voices::builtin_catalog();
+    let spec = voz_mcp::voices::resolve(&catalog, "es").expect("spec").clone();
+    assert_eq!(
+        voz_mcp::voices::sha256_hex(&bytes),
+        spec.onnx.clone().expect("sha")
+    );
+    assert!(voices.join("es_ES-davefx-medium.onnx.json").is_file());
+    let manifest = std::fs::read_to_string(voices.join("voices.toml")).expect("manifest");
+    std::fs::remove_dir_all(&root).ok();
+    assert!(manifest.contains("es = \"es_ES-davefx-medium\""), "{manifest}");
+}
+
+#[test]
+fn piper_is_discovered_on_path_when_the_root_has_no_engine() {
+    let root = std::env::temp_dir().join(format!("voz-e2e-path-{}", std::process::id()));
+    let bin_dir = root.join("pathbin");
+    let bin = bin_dir.join("piper");
+    std::fs::create_dir_all(&bin_dir).expect("mkdir bin");
+    std::fs::create_dir_all(root.join("piper").join("voices")).expect("mkdir voices");
+    std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").expect("write bin");
+    let path = format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default());
+    let output = Command::new(env!("CARGO_BIN_EXE_voz"))
+        .arg("path probe")
+        .args(["--lang", "en"])
+        .env("PATH", &path)
+        .env("VOZ_NEURAL_ROOT", &root)
+        .env("VOZ_BACKEND", "fallback")
+        .env("VOZ_AUTO_FETCH", "0")
+        .env_remove("VOZ_PIPER_BIN")
+        .output()
+        .expect("run cli");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    std::fs::remove_dir_all(&root).ok();
+    assert!(!output.status.success(), "no voice installed, so synthesis must fail");
+    assert!(
+        stderr.contains(&bin.display().to_string()),
+        "the searched message must name the PATH engine: {stderr}"
+    );
+}

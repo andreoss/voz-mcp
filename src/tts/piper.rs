@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{Language, Pitch, SpeakRequest, Speech, Timeout, Tts, TtsError};
 use crate::backend::PiperPaths;
+use crate::voices::{self, VoiceSpec};
 
 pub struct Piper {
     bin: PathBuf,
@@ -11,6 +12,26 @@ pub struct Piper {
     out_dir: PathBuf,
     timeout: Timeout,
     counter: AtomicU64,
+    config: PiperConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PiperConfig {
+    pub root: PathBuf,
+    pub catalog: Vec<VoiceSpec>,
+    pub preferred: Vec<(String, String)>,
+    pub auto_fetch: bool,
+}
+
+impl PiperConfig {
+    pub fn root_only(root: PathBuf) -> Self {
+        Self {
+            root,
+            catalog: Vec::new(),
+            preferred: Vec::new(),
+            auto_fetch: false,
+        }
+    }
 }
 
 impl Piper {
@@ -20,6 +41,22 @@ impl Piper {
         out_dir: impl Into<PathBuf>,
         timeout: Timeout,
     ) -> Self {
+        let voices = voices.into();
+        let root = voices
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| voices.clone());
+        Self::configured(bin, voices, out_dir, timeout, PiperConfig::root_only(root))
+    }
+
+    pub fn configured(
+        bin: impl Into<PathBuf>,
+        voices: impl Into<PathBuf>,
+        out_dir: impl Into<PathBuf>,
+        timeout: Timeout,
+        config: PiperConfig,
+    ) -> Self {
         let out_dir = out_dir.into();
         std::fs::create_dir_all(&out_dir).expect("failed to create output directory");
         Self {
@@ -28,7 +65,39 @@ impl Piper {
             out_dir,
             timeout,
             counter: AtomicU64::new(0),
+            config,
         }
+    }
+
+    fn resolve_voice(&self, lang: Language) -> Result<PathBuf, TtsError> {
+        let code = lang.code();
+        if let Some((_, id)) = self
+            .config
+            .preferred
+            .iter()
+            .find(|(c, _)| c == code)
+        {
+            let candidate = self.voices.join(format!("{id}.onnx"));
+            if candidate.is_file() && json_sibling(&candidate).is_file() {
+                return Ok(candidate);
+            }
+        }
+        if let Some(hit) = voice_for(&self.voices, lang) {
+            return Ok(hit);
+        }
+        if self.config.auto_fetch {
+            return match voices::resolve(&self.config.catalog, code) {
+                Some(spec) => voices::fetch(spec, &self.voices).map_err(|e| TtsError {
+                    reason: format!("voice fetch for {code} failed: {e}"),
+                }),
+                None => Err(TtsError {
+                    reason: format!("no catalogued voice for language {code}"),
+                }),
+            };
+        }
+        Err(TtsError {
+            reason: format!("no vits voice for language {code}"),
+        })
     }
 }
 
@@ -188,9 +257,7 @@ impl Tts for Piper {
                 reason: "text must not be empty".to_string(),
             });
         }
-        let voice = voice_for(&self.voices, req.lang).ok_or_else(|| TtsError {
-            reason: format!("no vits voice for language {}", req.lang.code()),
-        })?;
+        let voice = self.resolve_voice(req.lang)?;
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
         let raw = self
             .out_dir
@@ -230,15 +297,57 @@ impl Tts for Piper {
     }
 }
 
-pub fn scan_piper(root: &Path, bin_override: Option<&Path>) -> Option<PiperPaths> {
-    let bin = match bin_override {
-        Some(p) if p.exists() => p.to_path_buf(),
-        _ => root.join("piper").join("bin").join("piper"),
+pub fn find_on_path(name: &str, path: &str) -> Option<PathBuf> {
+    path.split(':')
+        .map(PathBuf::from)
+        .find(|dir| dir.join(name).is_file())
+        .map(|dir| dir.join(name))
+}
+
+pub fn piper_search(
+    root: &Path,
+    bin_override: Option<&Path>,
+    voices_override: Option<&Path>,
+) -> (PathBuf, PathBuf) {
+    let path = std::env::var("PATH").unwrap_or_default();
+    piper_search_on(root, bin_override, voices_override, &path)
+}
+
+fn piper_search_on(
+    root: &Path,
+    bin_override: Option<&Path>,
+    voices_override: Option<&Path>,
+    path: &str,
+) -> (PathBuf, PathBuf) {
+    let root_bin = root.join("piper").join("bin").join("piper");
+    let bin = bin_override
+        .filter(|p| p.exists())
+        .map(Path::to_path_buf)
+        .or_else(|| root_bin.exists().then(|| root_bin.clone()))
+        .or_else(|| find_on_path("piper", path))
+        .unwrap_or(root_bin);
+    let voices = match voices_override.filter(|v| v.is_dir()) {
+        Some(v) => v.to_path_buf(),
+        None => {
+            let sibling = bin.parent().and_then(Path::parent).map(|p| p.join("voices"));
+            match sibling.filter(|p| p.is_dir()) {
+                Some(v) => v,
+                None => root.join("piper").join("voices"),
+            }
+        }
     };
+    (bin, voices)
+}
+
+pub fn scan_piper(
+    root: &Path,
+    bin_override: Option<&Path>,
+    voices_override: Option<&Path>,
+) -> Option<PiperPaths> {
+    let (bin, voices) = piper_search(root, bin_override, voices_override);
     if !bin.exists() {
         return None;
     }
-    let voices = bin.parent()?.parent()?.join("voices");
     let found = std::fs::read_dir(&voices)
         .ok()?
         .flatten()
@@ -576,7 +685,7 @@ mod tests {
         std::fs::rename(tree.bin(), bin_dir.join("piper")).expect("mv bin");
         let voices_dst = root.join("piper").join("voices");
         std::fs::rename(tree.voices(), &voices_dst).expect("mv voices");
-        let hit = scan_piper(&root, None).expect("found");
+        let hit = scan_piper(&root, None, None).expect("found");
         assert_eq!(hit.bin, bin_dir.join("piper"));
         assert_eq!(hit.voices, voices_dst);
     }
@@ -586,7 +695,7 @@ mod tests {
         let tree = Tree::new("scanover", &["en_US-a-medium"]).emitting_fixture();
         let root = tree.dir.join("empty-root");
         std::fs::create_dir_all(&root).expect("mkdir");
-        let hit = scan_piper(&root, Some(&tree.bin())).expect("found");
+        let hit = scan_piper(&root, Some(&tree.bin()), None).expect("found");
         assert_eq!(hit.bin, tree.bin());
         assert_eq!(hit.voices, tree.voices());
     }
@@ -596,7 +705,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("voz-piper-noroot-{}", std::process::id()));
         std::fs::create_dir_all(&root).expect("mkdir");
         let missing = PathBuf::from("/definitely/not/a/vits/bin");
-        let hit = scan_piper(&root, Some(&missing));
+        let hit = scan_piper(&root, Some(&missing), None);
         std::fs::remove_dir_all(&root).ok();
         assert!(hit.is_none());
     }
@@ -604,14 +713,56 @@ mod tests {
     #[test]
     fn scan_piper_returns_none_without_voices() {
         let tree = Tree::new("scannovoice", &[]).emitting_fixture();
-        assert!(scan_piper(&tree.dir.join("nowhere"), Some(&tree.bin())).is_none());
+        assert!(scan_piper(&tree.dir.join("nowhere"), Some(&tree.bin()), None).is_none());
     }
 
     #[test]
     fn scan_piper_returns_none_when_voice_lacks_json() {
         let tree = Tree::new("scannojson", &["en_US-a-medium"]).emitting_fixture();
         std::fs::remove_file(tree.voices().join("en_US-a-medium.onnx.json")).expect("rm");
-        assert!(scan_piper(&tree.dir.join("nowhere"), Some(&tree.bin())).is_none());
+        assert!(scan_piper(&tree.dir.join("nowhere"), Some(&tree.bin()), None).is_none());
+    }
+
+    #[test]
+    fn find_on_path_locates_a_named_binary() {
+        let dir = std::env::temp_dir().join(format!("voz-path-{}", std::process::id()));
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir");
+        std::fs::write(bin.join("piper"), b"#!/bin/sh\n").expect("write");
+        let found = find_on_path("piper", &format!("/nowhere:{}:/elsewhere", bin.display()));
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(found, Some(bin.join("piper")));
+    }
+
+    #[test]
+    fn find_on_path_returns_none_when_absent() {
+        assert_eq!(find_on_path("piper", "/definitely/not/here"), None);
+    }
+
+    #[test]
+    fn piper_search_falls_back_to_path_when_root_has_no_piper() {
+        let dir = std::env::temp_dir().join(format!("voz-search-path-{}", std::process::id()));
+        let bin_dir = dir.join("bindir");
+        std::fs::create_dir_all(&bin_dir).expect("mkdir");
+        std::fs::write(bin_dir.join("piper"), b"#!/bin/sh\n").expect("write");
+        let (bin, voices) = piper_search_on(&dir.join("empty-root"), None, None, &bin_dir.to_string_lossy());
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(bin, bin_dir.join("piper"));
+        assert!(voices.ends_with("piper/voices"));
+    }
+
+    #[test]
+    fn piper_search_prefers_an_existing_root_over_path() {
+        let dir = std::env::temp_dir().join(format!("voz-search-root-{}", std::process::id()));
+        let root_bin = dir.join("root").join("piper").join("bin").join("piper");
+        std::fs::create_dir_all(root_bin.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&root_bin, b"#!/bin/sh\n").expect("write");
+        let path_bin = dir.join("path").join("piper");
+        std::fs::create_dir_all(path_bin.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&path_bin, b"#!/bin/sh\n").expect("write");
+        let (bin, _) = piper_search_on(&dir.join("root"), None, None, &dir.join("path").to_string_lossy());
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(bin, root_bin);
     }
 
     fn sine(n: usize, cycles: f64) -> Vec<i16> {
@@ -698,5 +849,42 @@ mod tests {
             shifted.len(),
             plain.len()
         );
+    }
+
+    #[test]
+    fn voices_override_frees_the_binary_from_the_tree() {
+        let dir = std::env::temp_dir().join(format!("voz-piper-vo-{}", std::process::id()));
+        let elsewhere = dir.join("somewhere/bin");
+        let voices = dir.join("other-voices");
+        std::fs::create_dir_all(&elsewhere).expect("mkdir bin");
+        std::fs::create_dir_all(&voices).expect("mkdir voices");
+        let bin = elsewhere.join("piper");
+        std::fs::write(&bin, b"x").expect("write bin");
+        std::fs::write(voices.join("en_US-x.onnx"), b"v").expect("voice");
+        std::fs::write(voices.join("en_US-x.onnx.json"), b"{}").expect("cfg");
+        let hit = scan_piper(&dir, Some(&bin), Some(&voices));
+        let without = scan_piper(&dir, Some(&bin), None);
+        std::fs::remove_dir_all(&dir).ok();
+        let hit = hit.expect("voices override must be honoured");
+        assert_eq!(hit.bin, bin);
+        assert_eq!(hit.voices, voices);
+        assert!(
+            without.is_none(),
+            "without the override the sibling layout is still required"
+        );
+    }
+
+    #[test]
+    fn missing_voices_override_falls_back_to_the_sibling_layout() {
+        let dir = std::env::temp_dir().join(format!("voz-piper-vom-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("piper/bin")).expect("mkdir");
+        std::fs::create_dir_all(dir.join("piper/voices")).expect("mkdir");
+        std::fs::write(dir.join("piper/bin/piper"), b"x").expect("bin");
+        std::fs::write(dir.join("piper/voices/en_US-y.onnx"), b"v").expect("voice");
+        std::fs::write(dir.join("piper/voices/en_US-y.onnx.json"), b"{}").expect("cfg");
+        let absent = PathBuf::from("/definitely/not/a/real/voices");
+        let hit = scan_piper(&dir, None, Some(&absent));
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(hit.expect("found").voices, dir.join("piper/voices"));
     }
 }

@@ -2,21 +2,71 @@ use std::path::PathBuf;
 
 use crate::backend::{
     backend_choice, neural_root, pick_backend, read_backend_choice_override,
-    read_neural_bin_override, read_neural_root_override, read_piper_bin_override, BackendChoice,
-    BackendPick, SelectionError,
+    read_neural_bin_override, read_neural_root_override, read_piper_bin_override,
+    read_piper_voices_override, BackendChoice, BackendPick, PiperPaths, SelectionError,
 };
 use crate::readback::fs::FsReadback;
 use crate::tool::Server;
 use crate::tts::null::Null;
-use crate::tts::piper::{scan_piper, Piper};
-use crate::tts::qwen::{scan_modelz, Qwen};
+use crate::tts::piper::{piper_search, scan_piper, Piper};
+use crate::tts::qwen::{neural_search, scan_modelz, Qwen};
 use crate::tts::{Timeout, Tts};
 
 pub fn discover_backend_pick(choice: BackendChoice) -> Result<BackendPick, SelectionError> {
     let root = neural_root(read_neural_root_override().as_deref());
-    let neural = scan_modelz(&root, read_neural_bin_override().as_deref());
-    let piper = scan_piper(&root, read_piper_bin_override().as_deref());
-    pick_backend(choice, neural.as_ref(), piper.as_ref())
+    let config = crate::config::load(&crate::config::config_path(&root));
+    let neural_bin = read_neural_bin_override();
+    let piper_bin = read_piper_bin_override().or_else(|| config.bin.clone());
+    let piper_voices = read_piper_voices_override().or_else(|| config.voices.clone());
+    let neural = scan_modelz(&root, neural_bin.as_deref());
+    let mut piper = scan_piper(&root, piper_bin.as_deref(), piper_voices.as_deref());
+    if piper.is_none() && crate::config::auto_fetch(&config) {
+        let (bin, voices) = piper_search(&root, piper_bin.as_deref(), piper_voices.as_deref());
+        if bin.exists() {
+            piper = Some(PiperPaths { bin, voices });
+        }
+    }
+    pick_backend(choice, neural.as_ref(), piper.as_ref()).map_err(|e| match e {
+        SelectionError::Unavailable(c) => SelectionError::UnavailableAt {
+            choice: c,
+            searched: searched_paths(c, &root, neural_bin.as_deref(), piper_bin.as_deref(), piper_voices.as_deref()),
+        },
+        other => other,
+    })
+}
+
+fn searched_paths(
+    choice: BackendChoice,
+    root: &std::path::Path,
+    neural_bin: Option<&std::path::Path>,
+    piper_bin: Option<&std::path::Path>,
+    piper_voices: Option<&std::path::Path>,
+) -> String {
+    match choice {
+        BackendChoice::Fallback => {
+            let (bin, voices) = piper_search(root, piper_bin, piper_voices);
+            format!(
+                "engine {} ({}), voices {} ({}); set VOZ_PIPER_BIN and VOZ_PIPER_VOICES to override",
+                bin.display(),
+                if bin.exists() { "found" } else { "missing" },
+                voices.display(),
+                if voices.is_dir() {
+                    "no <lang>_*.onnx with a matching .onnx.json"
+                } else {
+                    "missing"
+                }
+            )
+        }
+        _ => {
+            let (bin, gguf) = neural_search(root, neural_bin);
+            format!(
+                "engine {} ({}), weights {}; set VOZ_NEURAL_BIN or VOZ_NEURAL_ROOT to override",
+                bin.display(),
+                if bin.exists() { "found" } else { "missing" },
+                gguf.display()
+            )
+        }
+    }
 }
 
 pub fn select_backend_pick() -> Result<BackendPick, SelectionError> {
@@ -28,9 +78,24 @@ pub fn build_backend(pick: BackendPick, out_dir: PathBuf, timeout: Timeout) -> B
         BackendPick::Neural { bin, talker, codec } => {
             Box::new(Qwen::new(bin, talker, codec, out_dir, timeout))
         }
-        BackendPick::Piper { bin, voices } => Box::new(Piper::new(bin, voices, out_dir, timeout)),
+        BackendPick::Piper { bin, voices } => Box::new(build_piper(bin, voices, out_dir, timeout)),
         BackendPick::Null => Box::new(Null),
     }
+}
+
+fn build_piper(bin: PathBuf, voices: PathBuf, out_dir: PathBuf, timeout: Timeout) -> Piper {
+    let root = neural_root(read_neural_root_override().as_deref());
+    let config = crate::config::load(&crate::config::config_path(&root));
+    let catalog = crate::voices::catalog(&root);
+    let manifest = crate::voices::read_manifest(&voices);
+    let preferred = crate::config::preferred_voices(&config, &manifest);
+    let piper_config = crate::tts::piper::PiperConfig {
+        root,
+        catalog,
+        preferred,
+        auto_fetch: crate::config::auto_fetch(&config),
+    };
+    Piper::configured(bin, voices, out_dir, timeout, piper_config)
 }
 
 pub fn build_mcp_server(pick: BackendPick, out_dir: PathBuf, timeout: Timeout) -> Server {

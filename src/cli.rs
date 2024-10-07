@@ -9,7 +9,21 @@ pub enum Mode {
     Mcp,
     Help,
     Version,
+    Voices(VoicesArgs),
     Audio(AudioArgs),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoicesArgs {
+    pub cmd: VoicesCmd,
+    pub lang: Option<String>,
+    pub all: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoicesCmd {
+    List,
+    Fetch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,17 +43,23 @@ pub enum ParseError {
     Language(LanguageError),
     Rate(RateError),
     Pitch(PitchError),
+    UnknownVoicesCommand(String),
+    MissingVoicesScope,
 }
 
 pub fn usage() -> String {
     format!(
         "voz <text> [--lang {}] [--rate {}..{}] [--pitch {}..{}] [--out path]\n\
          voz mcp                stdio MCP server (speak, readback)\n\
+         voz voices list        catalogued voices and which are installed\n\
+         voz voices fetch --lang es | --all\n\
+         \n\
          voz --help | -h        this message\n\
          voz --version | -V     version\n\
          \n\
          env: VOZ_OUT_DIR output dir; VOZ_BACKEND {}; VOZ_NEURAL_ROOT data\n\
-         root; VOZ_NEURAL_BIN, VOZ_PIPER_BIN engine paths; VOZ_TIMEOUT_SECS\n\
+         root; VOZ_NEURAL_BIN, VOZ_PIPER_BIN engine paths; VOZ_PIPER_VOICES\n\
+         voice dir; VOZ_CONFIG config file; VOZ_AUTO_FETCH 0|1; VOZ_TIMEOUT_SECS\n\
          synthesis budget in seconds",
         LANGUAGES,
         Rate::MIN,
@@ -75,6 +95,12 @@ impl fmt::Display for ParseError {
                 Pitch::MIN,
                 Pitch::MAX
             ),
+            ParseError::UnknownVoicesCommand(cmd) => {
+                write!(f, "unknown voices command: {cmd}, expected list|fetch")
+            }
+            ParseError::MissingVoicesScope => {
+                write!(f, "voices fetch needs --lang <code> or --all")
+            }
         }
     }
 }
@@ -102,10 +128,41 @@ where
             Some(extra) => Err(ParseError::UnknownFlag(extra.to_string_lossy().into_owned())),
         };
     }
+    if first == "voices" {
+        return parse_voices(args);
+    }
     if first.starts_with("--") {
         return Err(ParseError::MissingText);
     }
     parse_audio(first, args)
+}
+
+fn parse_voices(mut args: impl Iterator<Item = OsString>) -> Result<Mode, ParseError> {
+    let cmd = match args.next() {
+        None => VoicesCmd::List,
+        Some(word) => match word.to_string_lossy().as_ref() {
+            "list" => VoicesCmd::List,
+            "fetch" => VoicesCmd::Fetch,
+            other => return Err(ParseError::UnknownVoicesCommand(other.to_string())),
+        },
+    };
+    let mut lang = None;
+    let mut all = false;
+    while let Some(flag) = args.next() {
+        let flag = flag.to_string_lossy().into_owned();
+        match flag.as_str() {
+            "--lang" => {
+                let v = args.next().ok_or(ParseError::MissingValue("--lang"))?;
+                lang = Some(v.to_string_lossy().into_owned());
+            }
+            "--all" => all = true,
+            _ => return Err(ParseError::UnknownFlag(flag)),
+        }
+    }
+    if lang.is_none() && !all && cmd == VoicesCmd::Fetch {
+        return Err(ParseError::MissingVoicesScope);
+    }
+    Ok(Mode::Voices(VoicesArgs { cmd, lang, all }))
 }
 
 fn parse_audio(text: String, mut args: impl Iterator<Item = OsString>) -> Result<Mode, ParseError> {
@@ -169,6 +226,62 @@ mod tests {
     fn mcp_mode_rejects_extra_positional() {
         let err = parse(os(&["mcp", "extra"])).unwrap_err();
         assert_eq!(err, ParseError::UnknownFlag("extra".to_string()));
+    }
+
+    #[test]
+    fn voices_list_parses_without_a_command() {
+        assert_eq!(
+            parse(os(&["voices"])),
+            Ok(Mode::Voices(VoicesArgs {
+                cmd: VoicesCmd::List,
+                lang: None,
+                all: false
+            }))
+        );
+        assert_eq!(
+            parse(os(&["voices", "list"])),
+            Ok(Mode::Voices(VoicesArgs {
+                cmd: VoicesCmd::List,
+                lang: None,
+                all: false
+            }))
+        );
+    }
+
+    #[test]
+    fn voices_fetch_requires_a_scope() {
+        assert_eq!(
+            parse(os(&["voices", "fetch"])),
+            Err(ParseError::MissingVoicesScope)
+        );
+    }
+
+    #[test]
+    fn voices_fetch_accepts_a_language_or_all() {
+        assert_eq!(
+            parse(os(&["voices", "fetch", "--lang", "es"])),
+            Ok(Mode::Voices(VoicesArgs {
+                cmd: VoicesCmd::Fetch,
+                lang: Some("es".to_string()),
+                all: false
+            }))
+        );
+        assert_eq!(
+            parse(os(&["voices", "fetch", "--all"])),
+            Ok(Mode::Voices(VoicesArgs {
+                cmd: VoicesCmd::Fetch,
+                lang: None,
+                all: true
+            }))
+        );
+    }
+
+    #[test]
+    fn voices_rejects_an_unknown_command() {
+        assert_eq!(
+            parse(os(&["voices", "nuke"])),
+            Err(ParseError::UnknownVoicesCommand("nuke".to_string()))
+        );
     }
 
     #[test]

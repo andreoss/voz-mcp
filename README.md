@@ -55,7 +55,15 @@ The binary is `target/release/voz`.
 ```sh
 voz "hello world" --lang en --out hi.wav
 voz "привет мир" --lang ru --rate 170 --pitch 60 --out hi_ru.wav
+voz voices list
+voz voices fetch --lang es
+voz voices fetch --all
 ```
+
+`voices list` prints the catalogued fallback voices and which are installed.
+`voices fetch` downloads one, or every, catalogued language, verifying each
+file against the sha256 pinned in the catalogue. Fetching needs the network;
+synthesis does not.
 
 - `--lang` one of `ru en es de fr it pt zh ja ko` (default `en`).
 - `--rate` 50..500, `--pitch` 0..99; both optional. Both need the fallback
@@ -104,7 +112,14 @@ Restart the client after editing its config; configs load once at startup.
 | `VOZ_NEURAL_ROOT` | `$XDG_DATA_HOME/voz` | Data root override; ignored if the path does not exist |
 | `VOZ_NEURAL_BIN` | auto-discovered | Neural engine executable; weights are still resolved under the modelz root |
 | `VOZ_PIPER_BIN` | auto-discovered | Fallback engine executable; voices are read from `../voices` next to it |
+| `VOZ_PIPER_VOICES` | auto-discovered | Fallback voices directory |
+| `VOZ_CONFIG` | `<data root>/voz.toml` | Configuration file: engine path, voices directory, auto-fetch, per-language voice |
+| `VOZ_AUTO_FETCH` | `1` | Fetch a catalogued voice when the language has none; `0` disables it |
 | `VOZ_TIMEOUT_SECS` | `600` | Synthesis budget in whole seconds, `1..86400` |
+
+The fallback engine is discovered under the data root, or on `PATH` when the
+root holds none; its voices stay under the data root unless configured
+otherwise. Environment variables win over the configuration file.
 
 `VOZ_BACKEND` values:
 
